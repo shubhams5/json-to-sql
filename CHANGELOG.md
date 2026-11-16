@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- npm publish readiness: OIDC Release workflow, `verify:npm` / `release:preflight` / ordered publish scripts, `docs/NPM_PUBLISHING.md` + `docs/RELEASE_PROCESS.md` (org `json-to-sql` still required before first publish)
 - TypeORM dialect-aware DataSource / Nest `forRoot` / `.env.example` for SQLite (`better-sqlite3`), PostgreSQL (`pg`), MySQL (`mysql2`), SQL Server (`mssql`)
 - TypeORM entity relations from `TableModel.foreignKeys`: `@ManyToOne` / `@OneToMany` / `@JoinColumn`, custom join names, referential actions, self-refs, multi-FK uniqueness; composite FKs rejected at generate time
 - TypeORM FK/unique driver error → HTTP 409 mapping (Express + Nest); Nest create `201` / delete `204`

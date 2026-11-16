@@ -5,6 +5,7 @@ on:
     tags:
       - "v*"
 
+# OIDC trusted publishing — no long-lived NPM_TOKEN required after bootstrap.
 permissions:
   contents: read
   id-token: write
@@ -12,21 +13,57 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+
+      # Node 24 ships npm >= 11.5.1 (Trusted Publishing minimum).
+      # Do NOT set registry-url here: setup-node would write an empty
+      # //registry.npmjs.org/:_authToken=… line that blocks OIDC exchange.
+      # Do NOT enable package-manager cache on publish jobs.
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: npm
-          registry-url: https://registry.npmjs.org
+          node-version: 24
+          # No cache / no registry-url — required for safe OIDC trusted publishing.
+
+      - name: Ensure npm CLI for Trusted Publishing
+        run: |
+          set -euo pipefail
+          node --version
+          npm install -g npm@^11.5.1
+          npm --version
+          node -e "const v=require('child_process').execSync('npm --version',{encoding:'utf8'}).trim().split('.').map(Number); const ok=v[0]>11||(v[0]===11&&(v[1]>5||(v[1]===5&&v[2]>=1))); if(!ok){console.error('npm >= 11.5.1 required, got',v.join('.')); process.exit(1)}"
+
+      - name: Strip any _authToken that would block OIDC
+        run: |
+          set -euo pipefail
+          for f in "${NPM_CONFIG_USERCONFIG:-}" "$HOME/.npmrc" "${RUNNER_TEMP:-/tmp}/.npmrc"; do
+            if [ -n "${f}" ] && [ -f "${f}" ]; then
+              sed -i '/_authToken/d' "${f}" || true
+              echo "cleaned ${f}"
+            fi
+          done
+
       - run: npm ci
       - run: npm run build:packages
       - run: npm test
       - run: npm run pack:check
-      - run: npm publish -w @json-to-sql/core --access public --provenance
+      - run: npm run verify:npm
+
+      - name: Validate tag matches package versions
+        run: node scripts/release-preflight.mjs
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - run: npm publish -w @json-to-sql/cli --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # Allow idempotent re-run when a package already landed (partial recovery).
+          REQUIRE_UNPUBLISHED: "false"
+          RELEASE_TAG: ${{ github.ref_name }}
+
+      - name: Publish core then CLI (OIDC / provenance)
+        run: node scripts/npm-publish-ordered.mjs
+
+      - name: Post-publish registry check
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          npm view "@json-to-sql/core@${VERSION}" version
+          npm view "@json-to-sql/cli@${VERSION}" version
+          echo "ok both packages visible at ${VERSION}"

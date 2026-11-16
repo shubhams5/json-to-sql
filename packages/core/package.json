@@ -28,16 +28,29 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/shubhams5/json-to-sql",
+    "url": "git+https://github.com/shubhams5/json-to-sql.git",
     "directory": "packages/core"
   },
+  "homepage": "https://github.com/shubhams5/json-to-sql#readme",
+  "bugs": {
+    "url": "https://github.com/shubhams5/json-to-sql/issues"
+  },
+  "keywords": [
+    "json",
+    "sql",
+    "schema",
+    "prisma",
+    "typeorm",
+    "codegen"
+  ],
   "devDependencies": {
     "@types/node": "^22.13.10",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "license": "MIT"
 }

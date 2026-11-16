@@ -90,6 +90,8 @@ TypeORM: `synchronize` off unless `TYPEORM_SYNC=true`. Composite FKs rejected at
 - [Architecture](docs/ARCHITECTURE.md)
 - [Feature checklist](docs/FEATURE_CHECKLIST.md)
 - [Security assessment](docs/SECURITY_ASSESSMENT.md)
+- [npm publishing](docs/NPM_PUBLISHING.md)
+- [Release process](docs/RELEASE_PROCESS.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
@@ -106,6 +108,8 @@ TypeORM: `synchronize` off unless `TYPEORM_SYNC=true`. Composite FKs rejected at
 | `npm start` | Serve `out/` |
 | `npm run cli` | Run CLI |
 | `npm run pack:check` | Dry-run npm pack for publishable packages |
+| `npm run verify:npm` | Package metadata, tarball, exports, registry ping |
+| `npm run release:preflight` | Tag ↔ version gate (`-- vX.Y.Z`) |
 
 ## License
 

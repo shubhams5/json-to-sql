@@ -28,11 +28,23 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/shubhams5/json-to-sql",
+    "url": "git+https://github.com/shubhams5/json-to-sql.git",
     "directory": "packages/cli"
   },
+  "homepage": "https://github.com/shubhams5/json-to-sql#readme",
+  "bugs": {
+    "url": "https://github.com/shubhams5/json-to-sql/issues"
+  },
+  "keywords": [
+    "json",
+    "sql",
+    "cli",
+    "json2sql",
+    "codegen"
+  ],
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "license": "MIT"
 }

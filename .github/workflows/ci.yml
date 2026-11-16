@@ -27,6 +27,7 @@ jobs:
       - run: npm test
       - run: npm run lint
       - run: npm run pack:check
+      - run: npm run verify:npm
       - run: npm run test:consumer
       - run: npm run test:generated
       - run: npm run build

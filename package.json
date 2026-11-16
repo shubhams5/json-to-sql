@@ -7,7 +7,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/shubhams5/json-to-sql"
+    "url": "git+https://github.com/shubhams5/json-to-sql.git"
+  },
+  "homepage": "https://github.com/shubhams5/json-to-sql#readme",
+  "bugs": {
+    "url": "https://github.com/shubhams5/json-to-sql/issues"
   },
   "workspaces": [
     "packages/*"
@@ -24,6 +28,8 @@
     "test:e2e": "playwright test",
     "test:generated": "node scripts/validate-generated.mjs",
     "test:consumer": "node scripts/consumer-import.mjs",
+    "verify:npm": "node scripts/verify-npm-packages.mjs",
+    "release:preflight": "node scripts/release-preflight.mjs",
     "cli": "npm run build:packages && node packages/cli/dist/cli.js",
     "pack:check": "npm pack -w @json-to-sql/core --dry-run && npm pack -w @json-to-sql/cli --dry-run"
   },

@@ -31,7 +31,7 @@
     "directory": "packages/core"
   },
   "devDependencies": {
-    "@types/node": "^22.13.10",
+    "@types/node": "^26.6.6",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
   },

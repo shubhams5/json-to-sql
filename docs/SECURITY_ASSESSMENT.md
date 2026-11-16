@@ -1,6 +1,6 @@
 # Security assessment
 
-Date: 2026-11-16 (updated for **0.2.2** release hardening)
+Date: 2026-11-16 (updated for **0.3.0** TypeORM dialect/relations)
 
 ## Scope
 
@@ -19,7 +19,8 @@ Local JSON → schema/SQL/CRUD generation in browser and CLI. Generated Express/
 | ZIP path abuse | Table/file segments sanitized via `safeFileSegment` |
 | Mass assignment in generated CRUD | Express: Zod `.strict()` writable schemas (autoIncrement PKs excluded; update excludes all PKs). Nest: class-validator DTOs + `ValidationPipe` `whitelist`/`forbidNonWhitelisted`; update strips PK from data |
 | TypeORM schema drift in prod | `synchronize` only when `TYPEORM_SYNC=true` (default false); generated migration scripts + README; Nest CLI DataSource forces `synchronize: false` |
-| Query filter injection (Prisma) | `sanitizeFilter` allowlist + reject relation/logical ops (Express + Nest) |
+| TypeORM bad FK / unique | Generated Express/Nest map driver FK/unique errors to HTTP 409; SQLite `prepareDatabase` enables `foreign_keys = ON` |
+| TypeORM composite FK | Rejected at generate time (no silent invalid metadata) || Query filter injection (Prisma) | `sanitizeFilter` allowlist + reject relation/logical ops (Express + Nest) |
 | CI TLS bypass | `scripts/validate-generated.mjs` never sets `NODE_TLS_REJECT_UNAUTHORIZED=0`; uses Node default verification |
 
 ## Corporate TLS / Prisma engines
@@ -46,3 +47,9 @@ Locally, engine-download failures may WARN/skip Prisma smoke. With `CI=true`, th
 ## Recommendation
 
 Safe for local developer use. Review all generated artifacts before applying to real databases or shipping generated services. Prefer Prisma/TypeORM targets over experimental `orm:none` scaffolds. Prefer migrations over `TYPEORM_SYNC` outside throwaway local DBs.
+
+## Accepted dependency limitations (0.3.0)
+
+- **Next.js 15.5.4** kept (not 15.5.29): patch advisories exist (App Router Server Actions / middleware), but `15.5.29` breaks this repo’s static-export Turbopack build (`/_not-found` invariant) and webpack build (`assetPrefix: "."` vs `next/font`). App is `output: "export"` (no server runtime), so those server-side advisories have limited blast radius here. Revisit when a later 15.5.x patch builds cleanly.
+- **Prisma / better-sqlite3 smokes** require network + native binaries; corporate TLS intercept or missing native toolchain WARNs locally; GitHub Actions `CI=true` fails those skips (mandatory).
+- **npm publish** requires repo secret `NPM_TOKEN` (not inventable from this environment).

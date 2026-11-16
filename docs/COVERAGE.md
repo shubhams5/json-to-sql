@@ -12,7 +12,7 @@ Current suite (Vitest in `packages/core`):
 - Schema inference + overrides
 - Dialect listing / escaping / CREATE TABLE
 - Legacy DML INSERT/UPDATE/DELETE
-- Export + CRUD generators (Prisma dialect gates, Nest `sanitizeFilter`, TypeORM sync/mass-assignment/migrations/custom PK, composite PK reject)
+- Export + CRUD generators (Prisma dialect gates, Nest `sanitizeFilter`, TypeORM dialect env/relations/sync/mass-assignment/migrations/custom PK, composite PK + composite FK reject)
 
 As of 2026-11-16 (**0.2.2**): **58** unit tests in core. Also:
 

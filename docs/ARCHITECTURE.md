@@ -20,7 +20,7 @@ Pure TypeScript. No React. Safe to use from CLI, scripts, or the Next.js UI.
 | `schema/` | Inference + overrides |
 | `dialects/` | Dialect interface + PG/MySQL/MSSQL/SQLite |
 | `sql/` | DML + DDL + SELECT/JOIN + parameterized templates |
-| `crud/` | Express / NestJS code generation |
+| `crud/` | Express / NestJS × Prisma / TypeORM codegen (`typeormGen.ts` dialect + relations) |
 | `export/` | SQL / TS / JSON Schema / CSV / bundle |
 
 ### `@json-to-sql/cli`

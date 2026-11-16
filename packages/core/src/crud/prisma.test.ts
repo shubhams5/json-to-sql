@@ -174,10 +174,12 @@ describe("Prisma schema generation", () => {
     const route = expressFiles.find((f) => f.path.includes("routes/"))!.content;
     expect(route).toContain("createSchema.safeParse");
     expect(route).toContain(".strict()");
+    expect(route).toContain("mapTypeOrmError");
     expect(route).not.toMatch(/repo\(\)\.create\(req\.body\)/);
     expect(route).not.toMatch(/"id":\s*z\./);
     expect(expressFiles.find((f) => f.path === ".env.example")!.content).toContain("DB_TYPE=better-sqlite3");
     expect(expressFiles.some((f) => f.path === "src/migrations/.gitkeep")).toBe(true);
+    expect(ds).toContain("foreign_keys = ON");
     const pkg = JSON.parse(expressFiles.find((f) => f.path === "package.json")!.content);
     expect(pkg.scripts["migration:run"]).toBeTruthy();
     const expressMain = expressFiles.find((f) => f.path.endsWith("main.ts"))!.content;
@@ -188,9 +190,14 @@ describe("Prisma schema generation", () => {
     const appMod = nestFiles.find((f) => f.path.endsWith("app.module.ts"))!.content;
     expect(appMod).toContain("TYPEORM_SYNC");
     expect(appMod).not.toMatch(/synchronize:\s*true/);
+    expect(appMod).toContain("foreign_keys = ON");
     const service = nestFiles.find((f) => f.path.endsWith(".service.ts") && f.path.includes("users"))!.content;
     expect(service).toContain("const patch = { ...data }");
+    expect(service).toContain("rethrowTypeOrmHttp");
     expect(service).not.toMatch(/delete \(existing as any\)/);
+    const controller = nestFiles.find((f) => f.path.endsWith(".controller.ts") && f.path.includes("users"))!.content;
+    expect(controller).toContain("@HttpCode(201)");
+    expect(controller).toContain("@HttpCode(204)");
     const main = nestFiles.find((f) => f.path.endsWith("main.ts"))!.content;
     expect(main).toContain("forbidNonWhitelisted: true");
     expect(main).toContain("export async function createApp");

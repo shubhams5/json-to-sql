@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - 2026-11-16
+
+### Added
+
+- TypeORM dialect-aware DataSource / Nest `forRoot` / `.env.example` for SQLite (`better-sqlite3`), PostgreSQL (`pg`), MySQL (`mysql2`), SQL Server (`mssql`)
+- TypeORM entity relations from `TableModel.foreignKeys`: `@ManyToOne` / `@OneToMany` / `@JoinColumn`, custom join names, referential actions, self-refs, multi-FK uniqueness; composite FKs rejected at generate time
+- TypeORM FK/unique driver error → HTTP 409 mapping (Express + Nest); Nest create `201` / delete `204`
+- SQLite TypeORM configs enable `PRAGMA foreign_keys = ON` via `prepareDatabase`
+- Unit coverage in `typeorm.test.ts` for dialects, relations, composite reject, self-ref
+
+### Changed
+
+- Package versions **0.3.0** (`root`, `@json-to-sql/core`, `@json-to-sql/cli`)
+- Generated validation smokes assert PK mutation rejection and invalid FK → 409
+
+### Security notes
+
+- Next.js left on **15.5.4**: `15.5.29` fails static-export build in this repo; advisories documented as accepted while export has no server runtime
+
 ## [0.2.2] - 2026-11-16
 
 ### Fixed / hardened

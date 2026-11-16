@@ -1,6 +1,6 @@
 {
   "name": "@json-to-sql/core",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "JSON to SQL schema inference, dialect SQL generation, and CRUD codegen",
   "type": "module",
   "main": "./dist/index.js",

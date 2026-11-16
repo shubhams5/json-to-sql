@@ -1,6 +1,6 @@
 # Feature checklist
 
-Honest status for **0.2.2**. `[x]` = implemented and covered by automated tests where noted. `[~]` = partial. `[ ]` = not done.
+Honest status for **0.3.0**. `[x]` = implemented and covered by automated tests where noted. `[~]` = partial. `[ ]` = not done.
 
 ## JSON import and analysis
 
@@ -46,9 +46,10 @@ Honest status for **0.2.2**. `[x]` = implemented and covered by automated tests 
 
 - [x] Express + Prisma — strict Zod, `sanitizeFilter`, Prisma error mapping; unit tests + CI HTTP smoke when engines available
 - [x] NestJS + Prisma — `sanitizeFilter` / string query guards / P2025·P2002 mapping
-- [x] Express + TypeORM — Zod create/update (`.strict()`, no mass-assignment), `TYPEORM_SYNC` opt-in, migration scripts; SQLite HTTP smoke when `better-sqlite3` loads (CRUD, invalid body, FK)
-- [x] NestJS + TypeORM — Create/Update DTOs + `ValidationPipe` whitelist; PK strip on update; migrations DataSource (`synchronize: false`); SQLite HTTP smoke when native loads
+- [x] Express + TypeORM — dialect-aware DataSource/env (sqlite/pg/mysql/mssql), Zod `.strict()`, FK/unique → 409, relations (`ManyToOne`/`OneToMany`/`JoinColumn`), `TYPEORM_SYNC` opt-in, migrations; SQLite HTTP smoke (CRUD, PK protect, bad FK, child FK) when `better-sqlite3` loads
+- [x] NestJS + TypeORM — same dialect/relation/migration rules; Create/Update DTOs + whitelist; PK strip; HttpCode 201/204; SQLite HTTP smoke when native loads
 - [x] Custom string PK routes (create accepts PK; update rejects PK mutation) — unit tests always; Express TypeORM smoke when native loads
+- [x] Composite TypeORM FKs rejected at generate time (clear error)
 - [~] Experimental `orm:none` scaffolds (explicitly labeled)
 - [x] Generated-project compile for TypeORM always; Prisma validate/generate + TypeORM native smokes mandatory when `CI=true` (local may WARN-skip engines/native)
 

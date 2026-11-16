@@ -197,7 +197,7 @@ function mapPrisma(err: unknown): never {
     artifacts.push({
       path: `src/${file}/${file}.controller.ts`,
       language: "typescript",
-      content: `import { Body, Controller, Delete, Get, Param, ${pkIsNumber ? "ParseIntPipe, " : ""}Post, Put, Query, BadRequestException } from '@nestjs/common';
+      content: `import { Body, Controller, Delete, Get, HttpCode, Param, ${pkIsNumber ? "ParseIntPipe, " : ""}Post, Put, Query, BadRequestException } from '@nestjs/common';
 import { Create${entity}Dto, Update${entity}Dto } from './${file}.dto';
 import { ${entity}Service } from './${file}.service';
 import { asQueryString, sanitizeFilter } from './query.util';
@@ -241,6 +241,7 @@ export class ${entity}Controller {
   }
 
   @Post()
+  @HttpCode(201)
   create(@Body() body: Create${entity}Dto) {
     return this.service.create(body);
   }
@@ -251,8 +252,9 @@ export class ${entity}Controller {
   }
 
   @Delete(':id')
-  remove(@Param('id'${pkIsNumber ? ", ParseIntPipe" : ""}) id: ${pkIsNumber ? "number" : "string"}) {
-    return this.service.remove(id);
+  @HttpCode(204)
+  async remove(@Param('id'${pkIsNumber ? ", ParseIntPipe" : ""}) id: ${pkIsNumber ? "number" : "string"}) {
+    await this.service.remove(id);
   }
 }
 `,

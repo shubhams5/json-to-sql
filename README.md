@@ -75,13 +75,15 @@ cat sample.json | npm run cli -- - --out ./out --dialect sqlite
 
 ## Supported code generation
 
-| Target | Persistence | Status |
-|--------|-------------|--------|
-| Express + Prisma | Prisma Client | Production path |
-| Express + TypeORM | TypeORM DataSource | Production path |
-| NestJS + Prisma | Prisma + Nest | Production path |
-| NestJS + TypeORM | TypeORM + Nest | Production path |
-| Express/Nest `orm:none` | None / in-memory | **Experimental** |
+| Target | Persistence | Dialects in generated config | Relations | Status |
+|--------|-------------|------------------------------|-----------|--------|
+| Express + Prisma | Prisma Client | Via Prisma `provider` + `DATABASE_URL` | Prisma relations | Production path |
+| Express + TypeORM | TypeORM DataSource | sqlite / postgres / mysql / mssql env | `@ManyToOne` / `@OneToMany` | Production path |
+| NestJS + Prisma | Prisma + Nest | Via Prisma `provider` + `DATABASE_URL` | Prisma relations | Production path |
+| NestJS + TypeORM | TypeORM + Nest | sqlite / postgres / mysql / mssql env | `@ManyToOne` / `@OneToMany` | Production path |
+| Express/Nest `orm:none` | None / in-memory | n/a | n/a | **Experimental** |
+
+TypeORM: `synchronize` off unless `TYPEORM_SYNC=true`. Composite FKs rejected at generate time. Generated HTTP maps FK/unique failures to 409.
 
 ## Documentation
 

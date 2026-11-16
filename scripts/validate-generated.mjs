@@ -331,8 +331,14 @@ const id = created.json.id;
 const got = await req('GET', '/people/' + id);
 if (got.status !== 200 || got.json.name !== 'Ada') throw new Error('express-typeorm get failed');
 
+const pkHack = await req('PUT', '/people/' + id, { id: 999999, name: 'Ada Lovelace' });
+if (pkHack.status !== 400) throw new Error('express-typeorm expected 400 PK mutate, got ' + pkHack.status);
+
 const upd = await req('PUT', '/people/' + id, { name: 'Ada Lovelace' });
 if (upd.status !== 200 || upd.json.name !== 'Ada Lovelace') throw new Error('express-typeorm put failed');
+
+const badFk = await req('POST', '/people_profile', { people_id: 999999, city: 'Nowhere', tags: 'x' });
+if (badFk.status !== 409) throw new Error('express-typeorm expected 409 bad FK, got ' + badFk.status + ' ' + JSON.stringify(badFk.json));
 
 const child = await req('POST', '/people_profile', { people_id: id, city: 'London', tags: 'math' });
 if (child.status !== 201) throw new Error('express-typeorm FK child create failed: ' + child.status + ' ' + JSON.stringify(child.json));
@@ -402,23 +408,29 @@ const { createApp } = require('./dist/main.js');
   if (bad.status !== 400) throw new Error('nestjs-typeorm expected 400 unexpected, got ' + bad.status);
 
   const created = await req('POST', '/people', { name: 'Ada' });
-  if (created.status !== 201 && created.status !== 200) throw new Error('nestjs-typeorm create failed: ' + created.status);
+  if (created.status !== 201) throw new Error('nestjs-typeorm create failed: ' + created.status);
   const id = created.json.id;
 
   const got = await req('GET', '/people/' + id);
   if (got.status !== 200 || got.json.name !== 'Ada') throw new Error('nestjs-typeorm get failed');
 
+  const pkHack = await req('PUT', '/people/' + id, { id: 999999, name: 'Ada Lovelace' });
+  if (pkHack.status !== 400) throw new Error('nestjs-typeorm expected 400 PK mutate, got ' + pkHack.status);
+
   const upd = await req('PUT', '/people/' + id, { name: 'Ada Lovelace' });
   if (upd.status !== 200 || upd.json.name !== 'Ada Lovelace') throw new Error('nestjs-typeorm put failed');
 
+  const badFk = await req('POST', '/people_profile', { people_id: 999999, city: 'Nowhere', tags: 'x' });
+  if (badFk.status !== 409) throw new Error('nestjs-typeorm expected 409 bad FK, got ' + badFk.status);
+
   const child = await req('POST', '/people_profile', { people_id: id, city: 'London', tags: 'math' });
-  if (child.status !== 201 && child.status !== 200) throw new Error('nestjs-typeorm FK child failed: ' + child.status);
+  if (child.status !== 201) throw new Error('nestjs-typeorm FK child failed: ' + child.status);
 
   const delC = await req('DELETE', '/people_profile/' + child.json.id);
-  if (delC.status !== 200 && delC.status !== 204) throw new Error('nestjs-typeorm child delete failed');
+  if (delC.status !== 204) throw new Error('nestjs-typeorm child delete failed');
 
   const delP = await req('DELETE', '/people/' + id);
-  if (delP.status !== 200 && delP.status !== 204) throw new Error('nestjs-typeorm parent delete failed');
+  if (delP.status !== 204) throw new Error('nestjs-typeorm parent delete failed');
 
   await app.close();
   console.log('nestjs-typeorm-http-smoke-ok');

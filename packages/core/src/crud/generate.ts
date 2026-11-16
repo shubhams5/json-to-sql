@@ -6,12 +6,22 @@ import {
   propKey,
   safeFileSegment,
 } from "../codegen/safe.js";
-import type { CrudOrm, CrudTarget, ExportArtifact, SchemaModel, TableModel } from "../types.js";
+import type { CrudOrm, CrudTarget, ExportArtifact, SchemaModel } from "../types.js";
 import { assertSchemaSinglePrimaryKeys } from "./assertSinglePk.js";
 import { renderExpressPrisma } from "./expressPrisma.js";
 import { renderNestPrisma } from "./nestPrisma.js";
 import { renderPrismaSchema, writableColumns } from "./prismaSchema.js";
 import { zodTypeForColumn } from "./querySecurity.js";
+import {
+  TYPEORM_MIGRATION_README,
+  assertTypeOrmForeignKeys,
+  renderNestTypeOrmForRoot,
+  renderTypeOrmDataSourceBody,
+  renderTypeOrmEntity,
+  renderTypeOrmExpressErrorMapper,
+  renderTypeOrmNestErrorMapper,
+  typeormEnvExample,
+} from "./typeormGen.js";
 
 export { renderPrismaSchema };
 
@@ -28,69 +38,13 @@ function typeormDtoDecorator(sqlType: string, inferred: string): string {
   return "@IsString()\n  ";
 }
 
-const TYPEORM_MIGRATION_README = `## Schema changes (production-safe)
-
-\`synchronize\` is **off** unless \`TYPEORM_SYNC=true\` (local/dev only). Do not enable sync in production.
-
-1. Edit entities under \`src/entities/\`
-2. Generate a migration after pointing DataSource at a real DB:
-   \`\`\`bash
-   npm run migration:generate -- src/migrations/NameYourChange
-   \`\`\`
-3. Review the generated SQL, then apply:
-   \`\`\`bash
-   npm run migration:run
-   \`\`\`
-4. Revert last migration if needed: \`npm run migration:revert\`
-`;
-
-function dbTypeExample(dialect: SchemaModel["dialect"]): string {
-  if (dialect === "sqlite") return "better-sqlite3";
-  if (dialect === "postgres") return "postgres";
-  if (dialect === "mysql") return "mysql";
-  return "mssql";
-}
-
 function resolveOrm(target: CrudTarget): CrudOrm {
   return target.orm ?? "none";
 }
 
-function typeormColumnType(sqlType: string, inferred: string): string {
-  const t = (sqlType || inferred).toLowerCase();
-  if (t.includes("tinyint(1)") || t === "bit" || t.includes("bool")) return "boolean";
-  if (t.includes("bigint")) return "bigint";
-  if (t.includes("int")) return "int";
-  if (t.includes("double") || t.includes("float") || t.includes("real")) return "float";
-  if (t.includes("numeric") || t.includes("decimal")) return "decimal";
-  if (t.includes("json")) return "simple-json";
-  return "varchar";
-}
-
-function renderTypeOrmEntity(table: TableModel): string {
-  const entity = pascal(table.name);
-  const cols = table.columns.filter((c) => !c.isExcluded);
-  return `import { Entity, PrimaryGeneratedColumn, PrimaryColumn, Column } from 'typeorm';
-
-@Entity(${jsString(table.name)})
-export class ${entity} {
-${cols
-  .map((c) => {
-    if (c.isPrimaryKey && c.autoIncrement) {
-      return `  @PrimaryGeneratedColumn()\n  ${propKey(c.name)}!: number;`;
-    }
-    if (c.isPrimaryKey) {
-      const colType = typeormColumnType(c.sqlType, c.inferredType);
-      return `  @PrimaryColumn({ type: ${jsString(colType)} })\n  ${propKey(c.name)}!: ${mapTsType(c.sqlType, c.inferredType)};`;
-    }
-    return `  @Column({ type: ${jsString(typeormColumnType(c.sqlType, c.inferredType))}, nullable: ${c.nullable} })\n  ${propKey(c.name)}${c.nullable ? "?" : "!"}: ${mapTsType(c.sqlType, c.inferredType)};`;
-  })
-  .join("\n\n")}
-}
-`;
-}
-
 function renderExpressTypeOrm(schema: SchemaModel): ExportArtifact[] {
   assertSchemaSinglePrimaryKeys(schema, "express-typeorm");
+  assertTypeOrmForeignKeys(schema, "express-typeorm");
   const artifacts: ExportArtifact[] = [];
   artifacts.push({
     path: "package.json",
@@ -154,7 +108,7 @@ function renderExpressTypeOrm(schema: SchemaModel): ExportArtifact[] {
   });
   artifacts.push({
     path: ".env.example",
-    content: `DB_TYPE=${dbTypeExample(schema.dialect)}\nDB_HOST=localhost\nDB_PORT=5432\nDB_USER=user\nDB_PASS=pass\nDB_NAME=app\nTYPEORM_SYNC=false\nPORT=3000\n`,
+    content: typeormEnvExample(schema.dialect),
   });
   artifacts.push({
     path: "src/migrations/.gitkeep",
@@ -163,25 +117,11 @@ function renderExpressTypeOrm(schema: SchemaModel): ExportArtifact[] {
   artifacts.push({
     path: "src/data-source.ts",
     language: "typescript",
-    content: `import 'reflect-metadata';
-import { DataSource } from 'typeorm';
-${schema.tables.map((t) => `import { ${pascal(t.name)} } from './entities/${safeFileSegment(t.name)}.entity.js';`).join("\n")}
-
-export const AppDataSource = new DataSource({
-  type: (process.env.DB_TYPE as 'postgres' | 'mysql' | 'mssql' | 'better-sqlite3') ?? 'better-sqlite3',
-  host: process.env.DB_HOST,
-  port: process.env.DB_PORT ? Number(process.env.DB_PORT) : undefined,
-  username: process.env.DB_USER,
-  password: process.env.DB_PASS,
-  database: process.env.DB_NAME ?? 'dev.db',
-  synchronize: process.env.TYPEORM_SYNC === 'true',
-  entities: [${schema.tables.map((t) => pascal(t.name)).join(", ")}],
-  migrations: ['src/migrations/*.{ts,js}'],
-  migrationsTableName: 'typeorm_migrations',
-});
-
-export default AppDataSource;
-`,
+    content:
+      renderTypeOrmDataSourceBody(schema, {
+        synchronizeExpr: "process.env.TYPEORM_SYNC === 'true'",
+        entityImportExt: ".js",
+      }) + "\nexport default AppDataSource;\n",
   });
 
   for (const table of schema.tables) {
@@ -195,7 +135,7 @@ export default AppDataSource;
     artifacts.push({
       path: `src/entities/${file}.entity.ts`,
       language: "typescript",
-      content: renderTypeOrmEntity(table),
+      content: renderTypeOrmEntity(schema, table, { importExt: ".js" }),
     });
     artifacts.push({
       path: `src/routes/${file}.ts`,
@@ -207,7 +147,7 @@ import { ${entity} } from '../entities/${file}.entity.js';
 
 export const ${camel(table.name)}Router = Router();
 const repo = () => AppDataSource.getRepository(${entity});
-
+${renderTypeOrmExpressErrorMapper()}
 const createSchema = z.object({
 ${createCols.map((c) => `  ${JSON.stringify(c.name)}: ${zodTypeForColumn(c.sqlType, c.inferredType)}${c.nullable ? ".optional().nullable()" : ""},`).join("\n")}
 }).strict();
@@ -222,7 +162,7 @@ ${camel(table.name)}Router.get('/', async (req, res, next) => {
     const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize ?? 20) || 20));
     const [items, total] = await repo().findAndCount({ skip: (page - 1) * pageSize, take: pageSize });
     res.json({ items, total, page, pageSize });
-  } catch (err) { next(err); }
+  } catch (err) { if (mapTypeOrmError(err, res)) return; next(err); }
 });
 
 ${camel(table.name)}Router.get('/:id', async (req, res, next) => {
@@ -232,7 +172,7 @@ ${camel(table.name)}Router.get('/:id', async (req, res, next) => {
     const item = await repo().findOneBy({ ${propKey(pk)}: id as never });
     if (!item) return res.status(404).json({ error: 'Not found' });
     res.json(item);
-  } catch (err) { next(err); }
+  } catch (err) { if (mapTypeOrmError(err, res)) return; next(err); }
 });
 
 ${camel(table.name)}Router.post('/', async (req, res, next) => {
@@ -245,7 +185,7 @@ ${camel(table.name)}Router.post('/', async (req, res, next) => {
     const created = repo().create(parsed.data as never);
     const saved = await repo().save(created);
     res.status(201).json(saved);
-  } catch (err) { next(err); }
+  } catch (err) { if (mapTypeOrmError(err, res)) return; next(err); }
 });
 
 ${camel(table.name)}Router.put('/:id', async (req, res, next) => {
@@ -263,7 +203,7 @@ ${camel(table.name)}Router.put('/:id', async (req, res, next) => {
     delete data[${jsString(pk)}];
     Object.assign(existing, data);
     res.json(await repo().save(existing));
-  } catch (err) { next(err); }
+  } catch (err) { if (mapTypeOrmError(err, res)) return; next(err); }
 });
 
 ${camel(table.name)}Router.delete('/:id', async (req, res, next) => {
@@ -273,7 +213,7 @@ ${camel(table.name)}Router.delete('/:id', async (req, res, next) => {
     const result = await repo().delete(id);
     if (!result.affected) return res.status(404).json({ error: 'Not found' });
     res.status(204).send();
-  } catch (err) { next(err); }
+  } catch (err) { if (mapTypeOrmError(err, res)) return; next(err); }
 });
 `,
     });
@@ -325,6 +265,7 @@ ${TYPEORM_MIGRATION_README}
 
 function renderNestTypeOrm(schema: SchemaModel): ExportArtifact[] {
   assertSchemaSinglePrimaryKeys(schema, "nestjs-typeorm");
+  assertTypeOrmForeignKeys(schema, "nestjs-typeorm");
   const artifacts: ExportArtifact[] = [];
   artifacts.push({
     path: "package.json",
@@ -354,6 +295,7 @@ function renderNestTypeOrm(schema: SchemaModel): ExportArtifact[] {
           pg: "^8.14.1",
           mysql2: "^3.14.0",
           "better-sqlite3": "^11.8.1",
+          mssql: "^11.0.1",
         },
         devDependencies: {
           "@nestjs/cli": "^11.0.5",
@@ -394,7 +336,7 @@ function renderNestTypeOrm(schema: SchemaModel): ExportArtifact[] {
   });
   artifacts.push({
     path: ".env.example",
-    content: `DB_TYPE=better-sqlite3\nDB_NAME=dev.db\nTYPEORM_SYNC=false\nPORT=3000\n`,
+    content: typeormEnvExample(schema.dialect),
   });
   artifacts.push({
     path: "src/migrations/.gitkeep",
@@ -403,26 +345,13 @@ function renderNestTypeOrm(schema: SchemaModel): ExportArtifact[] {
   artifacts.push({
     path: "src/data-source.ts",
     language: "typescript",
-    content: `import 'reflect-metadata';
-import { DataSource } from 'typeorm';
-${schema.tables.map((t) => `import { ${pascal(t.name)} } from './entities/${safeFileSegment(t.name)}.entity';`).join("\n")}
-
-/** CLI DataSource for migrations — synchronize always false here. */
-const AppDataSource = new DataSource({
-  type: (process.env.DB_TYPE as 'better-sqlite3' | 'postgres' | 'mysql' | 'mssql') ?? 'better-sqlite3',
-  host: process.env.DB_HOST,
-  port: process.env.DB_PORT ? Number(process.env.DB_PORT) : undefined,
-  username: process.env.DB_USER,
-  password: process.env.DB_PASS,
-  database: process.env.DB_NAME ?? 'dev.db',
-  synchronize: false,
-  entities: [${schema.tables.map((t) => pascal(t.name)).join(", ")}],
-  migrations: ['src/migrations/*.{ts,js}'],
-  migrationsTableName: 'typeorm_migrations',
-});
-
-export default AppDataSource;
-`,
+    content:
+      "/** CLI DataSource for migrations — synchronize always false here. */\n" +
+      renderTypeOrmDataSourceBody(schema, {
+        synchronizeExpr: "false",
+        entityImportExt: "",
+      }) +
+      "\nexport default AppDataSource;\n",
   });
 
   for (const table of schema.tables) {
@@ -432,7 +361,11 @@ export default AppDataSource;
     const pkIsNumber = mapTsType(table.columns.find((c) => c.name === pk)?.sqlType ?? "", "integer") === "number";
     const createCols = table.columns.filter((c) => !c.isExcluded && !c.autoIncrement);
     const updateCols = writableColumns(table);
-    artifacts.push({ path: `src/entities/${file}.entity.ts`, language: "typescript", content: renderTypeOrmEntity(table) });
+    artifacts.push({
+      path: `src/entities/${file}.entity.ts`,
+      language: "typescript",
+      content: renderTypeOrmEntity(schema, table, { importExt: "" }),
+    });
     artifacts.push({
       path: `src/${file}/${file}.dto.ts`,
       language: "typescript",
@@ -459,12 +392,12 @@ ${updateCols
     artifacts.push({
       path: `src/${file}/${file}.service.ts`,
       language: "typescript",
-      content: `import { Injectable, NotFoundException } from '@nestjs/common';
+      content: `import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Create${entity}Dto, Update${entity}Dto } from './${file}.dto';
 import { ${entity} } from '../entities/${file}.entity';
-
+${renderTypeOrmNestErrorMapper()}
 @Injectable()
 export class ${entity}Service {
   constructor(@InjectRepository(${entity}) private readonly repo: Repository<${entity}>) {}
@@ -481,8 +414,12 @@ export class ${entity}Service {
     return item;
   }
 
-  create(data: Create${entity}Dto) {
-    return this.repo.save(this.repo.create(data));
+  async create(data: Create${entity}Dto) {
+    try {
+      return await this.repo.save(this.repo.create(data));
+    } catch (err) {
+      rethrowTypeOrmHttp(err);
+    }
   }
 
   async update(id: string | number, data: Update${entity}Dto) {
@@ -490,12 +427,20 @@ export class ${entity}Service {
     const patch = { ...data } as Record<string, unknown>;
     delete patch[${jsString(pk)}];
     Object.assign(existing, patch);
-    return this.repo.save(existing);
+    try {
+      return await this.repo.save(existing);
+    } catch (err) {
+      rethrowTypeOrmHttp(err);
+    }
   }
 
   async remove(id: string | number) {
     await this.findOne(id);
-    await this.repo.delete(id);
+    try {
+      await this.repo.delete(id);
+    } catch (err) {
+      rethrowTypeOrmHttp(err);
+    }
     return true;
   }
 }
@@ -504,7 +449,7 @@ export class ${entity}Service {
     artifacts.push({
       path: `src/${file}/${file}.controller.ts`,
       language: "typescript",
-      content: `import { Body, Controller, Delete, Get, Param, ${pkIsNumber ? "ParseIntPipe, " : ""}Post, Put, Query, ValidationPipe } from '@nestjs/common';
+      content: `import { Body, Controller, Delete, Get, HttpCode, Param, ${pkIsNumber ? "ParseIntPipe, " : ""}Post, Put, Query, ValidationPipe } from '@nestjs/common';
 import { Create${entity}Dto, Update${entity}Dto } from './${file}.dto';
 import { ${entity}Service } from './${file}.service';
 
@@ -517,7 +462,7 @@ export class ${entity}Controller {
   @Get(':id') get(@Param('id'${pkIsNumber ? ", ParseIntPipe" : ""}) id: ${pkIsNumber ? "number" : "string"}) {
     return this.service.findOne(id);
   }
-  @Post() create(
+  @Post() @HttpCode(201) create(
     @Body(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true, expectedType: Create${entity}Dto }))
     body: Create${entity}Dto,
   ) { return this.service.create(body); }
@@ -526,8 +471,8 @@ export class ${entity}Controller {
     @Body(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true, expectedType: Update${entity}Dto }))
     body: Update${entity}Dto,
   ) { return this.service.update(id, body); }
-  @Delete(':id') remove(@Param('id'${pkIsNumber ? ", ParseIntPipe" : ""}) id: ${pkIsNumber ? "number" : "string"}) {
-    return this.service.remove(id);
+  @Delete(':id') @HttpCode(204) async remove(@Param('id'${pkIsNumber ? ", ParseIntPipe" : ""}) id: ${pkIsNumber ? "number" : "string"}) {
+    await this.service.remove(id);
   }
 }
 `,
@@ -561,12 +506,7 @@ ${schema.tables.map((t) => `import { ${pascal(t.name)}Module } from './${safeFil
 
 @Module({
   imports: [
-    TypeOrmModule.forRoot({
-      type: (process.env.DB_TYPE as 'better-sqlite3') ?? 'better-sqlite3',
-      database: process.env.DB_NAME ?? 'dev.db',
-      synchronize: process.env.TYPEORM_SYNC === 'true',
-      entities: [${schema.tables.map((t) => pascal(t.name)).join(", ")}],
-    }),
+    ${renderNestTypeOrmForRoot(schema)},
     ${schema.tables.map((t) => `${pascal(t.name)}Module`).join(", ")}
   ],
 })

@@ -170,11 +170,19 @@ describe("Prisma schema generation", () => {
     expect(ds).toContain("process.env.TYPEORM_SYNC === 'true'");
     expect(ds).toMatch(/synchronize:\s*process\.env\.TYPEORM_SYNC/);
     expect(ds).not.toMatch(/synchronize:\s*true\b/);
+    expect(ds).toContain("migrations:");
     const route = expressFiles.find((f) => f.path.includes("routes/"))!.content;
     expect(route).toContain("createSchema.safeParse");
     expect(route).toContain(".strict()");
     expect(route).not.toMatch(/repo\(\)\.create\(req\.body\)/);
+    expect(route).not.toMatch(/"id":\s*z\./);
     expect(expressFiles.find((f) => f.path === ".env.example")!.content).toContain("DB_TYPE=better-sqlite3");
+    expect(expressFiles.some((f) => f.path === "src/migrations/.gitkeep")).toBe(true);
+    const pkg = JSON.parse(expressFiles.find((f) => f.path === "package.json")!.content);
+    expect(pkg.scripts["migration:run"]).toBeTruthy();
+    const expressMain = expressFiles.find((f) => f.path.endsWith("main.ts"))!.content;
+    expect(expressMain).toContain("export async function createApp");
+    expect(expressMain).toContain("NODE_ENV !== 'test'");
 
     const nestFiles = generateCrud(schema, parseCrudTargetFlag("nestjs-typeorm"));
     const appMod = nestFiles.find((f) => f.path.endsWith("app.module.ts"))!.content;
@@ -185,7 +193,53 @@ describe("Prisma schema generation", () => {
     expect(service).not.toMatch(/delete \(existing as any\)/);
     const main = nestFiles.find((f) => f.path.endsWith("main.ts"))!.content;
     expect(main).toContain("forbidNonWhitelisted: true");
+    expect(main).toContain("export async function createApp");
     const dto = nestFiles.find((f) => f.path.endsWith(".dto.ts"))!.content;
     expect(dto).toContain("CreateUsersDto");
+    expect(dto).not.toMatch(/^\s*id[!?]:/m);
+    expect(nestFiles.find((f) => f.path.endsWith("data-source.ts"))!.content).toContain("synchronize: false");
+    expect(nestFiles.find((f) => f.path === "README.md")!.content).toContain("migration:run");
+  });
+
+  it("typeorm express zod schema excludes pk and rejects unexpected props via strict", () => {
+    const schema = inferSchema([{ id: 1, name: "Ada", age: 30 }], { dialect: "sqlite", rootTableName: "users" });
+    const files = generateCrud(schema, parseCrudTargetFlag("express-typeorm"));
+    const route = files.find((f) => f.path.includes("routes/users"))!.content;
+    expect(route).toContain(".strict()");
+    expect(route).toContain('"name"');
+    expect(route).toContain('"age"');
+    expect(route).not.toMatch(/createSchema = z\.object\(\{[^}]*"id"/s);
+    expect(route).toContain("safeParse(req.body)");
+  });
+
+  it("typeorm nest uses IsInt for integer columns and strips pk on update", () => {
+    const schema = inferSchema([{ id: 1, name: "Ada", qty: 2 }], { dialect: "sqlite", rootTableName: "items" });
+    const files = generateCrud(schema, parseCrudTargetFlag("nestjs-typeorm"));
+    const dto = files.find((f) => f.path.endsWith(".dto.ts"))!.content;
+    expect(dto).toContain("@IsInt()");
+    expect(dto).toContain("IsInt");
+    const service = files.find((f) => f.path.endsWith(".service.ts") && f.path.includes("items"))!.content;
+    expect(service).toContain('delete patch["id"]');
+  });
+
+  it("typeorm supports custom string primary keys", () => {
+    const schema = inferSchema([{ code: "A1", name: "Ada" }], { dialect: "sqlite", rootTableName: "products" });
+    const table = schema.tables[0];
+    table.columns = table.columns.filter((c) => c.name !== "id");
+    for (const c of table.columns) {
+      c.isPrimaryKey = c.name === "code";
+      c.autoIncrement = false;
+    }
+    table.primaryKey = ["code"];
+    const files = generateCrud(schema, parseCrudTargetFlag("express-typeorm"));
+    const entity = files.find((f) => f.path.includes(".entity.ts"))!.content;
+    expect(entity).toContain("@PrimaryColumn()");
+    expect(entity).toContain("code");
+    const route = files.find((f) => f.path.includes("routes/"))!.content;
+    expect(route).toContain('"name"');
+    // Client-supplied PK allowed on create only
+    expect(route).toMatch(/createSchema[\s\S]*"code":\s*z\.string/);
+    expect(route).toMatch(/updateSchema[\s\S]*\.strict\(\)/);
+    expect(route).not.toMatch(/updateSchema = z\.object\(\{[^}]*"code"/s);
   });
 });

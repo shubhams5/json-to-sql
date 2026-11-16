@@ -1,6 +1,6 @@
 # Feature checklist
 
-Honest status for **0.2.1**. `[x]` = implemented and covered by automated tests where noted. `[~]` = partial. `[ ]` = not done.
+Honest status for **0.2.2**. `[x]` = implemented and covered by automated tests where noted. `[~]` = partial. `[ ]` = not done.
 
 ## JSON import and analysis
 
@@ -44,12 +44,13 @@ Honest status for **0.2.1**. `[x]` = implemented and covered by automated tests 
 
 ## CRUD generator
 
-- [x] Express + Prisma — strict Zod, `sanitizeFilter`, Prisma error mapping; unit substring tests + CI HTTP smoke when engines available
-- [x] NestJS + Prisma — `sanitizeFilter` / string query guards / P2025·P2002 mapping (filter was unsanitized before 0.2.1 correctness pass)
-- [x] Express + TypeORM — Zod create/update, no mass-assignment, `TYPEORM_SYNC` opt-in (default false)
-- [x] NestJS + TypeORM — Create/Update DTOs + `ValidationPipe` whitelist; update strips PK from **data** only; `TYPEORM_SYNC` opt-in
+- [x] Express + Prisma — strict Zod, `sanitizeFilter`, Prisma error mapping; unit tests + CI HTTP smoke when engines available
+- [x] NestJS + Prisma — `sanitizeFilter` / string query guards / P2025·P2002 mapping
+- [x] Express + TypeORM — Zod create/update (`.strict()`, no mass-assignment), `TYPEORM_SYNC` opt-in, migration scripts; SQLite HTTP smoke when `better-sqlite3` loads (CRUD, invalid body, FK)
+- [x] NestJS + TypeORM — Create/Update DTOs + `ValidationPipe` whitelist; PK strip on update; migrations DataSource (`synchronize: false`); SQLite HTTP smoke when native loads
+- [x] Custom string PK routes (create accepts PK; update rejects PK mutation) — unit tests always; Express TypeORM smoke when native loads
 - [~] Experimental `orm:none` scaffolds (explicitly labeled)
-- [x] Generated-project compile for all four targets always; `prisma validate`/`generate`/Express HTTP smoke when engines download (CI=`true` fails skips); dialect jobs are SQL-only
+- [x] Generated-project compile for TypeORM always; Prisma validate/generate + TypeORM native smokes mandatory when `CI=true` (local may WARN-skip engines/native)
 
 ## Import / export
 

@@ -17,10 +17,32 @@ export { renderPrismaSchema };
 
 function typeormDtoDecorator(sqlType: string, inferred: string): string {
   const t = mapTsType(sqlType, inferred);
-  if (t === "number") return "@IsNumber()\n  ";
+  if (t === "number") {
+    const s = (sqlType || inferred).toLowerCase();
+    if (s.includes("int") || s.includes("serial") || inferred === "integer") {
+      return "@IsInt()\n  ";
+    }
+    return "@IsNumber()\n  ";
+  }
   if (t === "boolean") return "@IsBoolean()\n  ";
   return "@IsString()\n  ";
 }
+
+const TYPEORM_MIGRATION_README = `## Schema changes (production-safe)
+
+\`synchronize\` is **off** unless \`TYPEORM_SYNC=true\` (local/dev only). Do not enable sync in production.
+
+1. Edit entities under \`src/entities/\`
+2. Generate a migration after pointing DataSource at a real DB:
+   \`\`\`bash
+   npm run migration:generate -- src/migrations/NameYourChange
+   \`\`\`
+3. Review the generated SQL, then apply:
+   \`\`\`bash
+   npm run migration:run
+   \`\`\`
+4. Revert last migration if needed: \`npm run migration:revert\`
+`;
 
 function dbTypeExample(dialect: SchemaModel["dialect"]): string {
   if (dialect === "sqlite") return "better-sqlite3";
@@ -77,7 +99,14 @@ function renderExpressTypeOrm(schema: SchemaModel): ExportArtifact[] {
         name: "generated-express-typeorm",
         private: true,
         type: "module",
-        scripts: { build: "tsc -p tsconfig.json", start: "node dist/main.js", dev: "tsx src/main.ts" },
+        scripts: {
+          build: "tsc -p tsconfig.json",
+          start: "node dist/main.js",
+          dev: "tsx src/main.ts",
+          "migration:run": "tsx ./node_modules/typeorm/cli.js migration:run -d src/data-source.ts",
+          "migration:revert": "tsx ./node_modules/typeorm/cli.js migration:revert -d src/data-source.ts",
+          "migration:generate": "tsx ./node_modules/typeorm/cli.js migration:generate -d src/data-source.ts",
+        },
         dependencies: {
           express: "^4.21.2",
           typeorm: "^0.3.21",
@@ -127,6 +156,10 @@ function renderExpressTypeOrm(schema: SchemaModel): ExportArtifact[] {
     content: `DB_TYPE=${dbTypeExample(schema.dialect)}\nDB_HOST=localhost\nDB_PORT=5432\nDB_USER=user\nDB_PASS=pass\nDB_NAME=app\nTYPEORM_SYNC=false\nPORT=3000\n`,
   });
   artifacts.push({
+    path: "src/migrations/.gitkeep",
+    content: "",
+  });
+  artifacts.push({
     path: "src/data-source.ts",
     language: "typescript",
     content: `import 'reflect-metadata';
@@ -142,7 +175,11 @@ export const AppDataSource = new DataSource({
   database: process.env.DB_NAME ?? 'dev.db',
   synchronize: process.env.TYPEORM_SYNC === 'true',
   entities: [${schema.tables.map((t) => pascal(t.name)).join(", ")}],
+  migrations: ['src/migrations/*.{ts,js}'],
+  migrationsTableName: 'typeorm_migrations',
 });
+
+export default AppDataSource;
 `,
   });
 
@@ -151,7 +188,9 @@ export const AppDataSource = new DataSource({
     const entity = pascal(table.name);
     const pk = table.primaryKey[0] ?? "id";
     const pkIsNumber = mapTsType(table.columns.find((c) => c.name === pk)?.sqlType ?? "", "integer") === "number";
-    const writable = writableColumns(table);
+    // Create may include client-supplied PKs; never autoIncrement / excluded. Update never includes PKs.
+    const createCols = table.columns.filter((c) => !c.isExcluded && !c.autoIncrement);
+    const updateCols = writableColumns(table);
     artifacts.push({
       path: `src/entities/${file}.entity.ts`,
       language: "typescript",
@@ -169,10 +208,12 @@ export const ${camel(table.name)}Router = Router();
 const repo = () => AppDataSource.getRepository(${entity});
 
 const createSchema = z.object({
-${writable.map((c) => `  ${JSON.stringify(c.name)}: ${zodTypeForColumn(c.sqlType, c.inferredType)}${c.nullable ? ".optional().nullable()" : ""},`).join("\n")}
+${createCols.map((c) => `  ${JSON.stringify(c.name)}: ${zodTypeForColumn(c.sqlType, c.inferredType)}${c.nullable ? ".optional().nullable()" : ""},`).join("\n")}
 }).strict();
 
-const updateSchema = createSchema.partial();
+const updateSchema = z.object({
+${updateCols.map((c) => `  ${JSON.stringify(c.name)}: ${zodTypeForColumn(c.sqlType, c.inferredType)}.optional()${c.nullable ? ".nullable()" : ""},`).join("\n")}
+}).strict();
 
 ${camel(table.name)}Router.get('/', async (req, res, next) => {
   try {
@@ -244,8 +285,8 @@ ${camel(table.name)}Router.delete('/:id', async (req, res, next) => {
 import { AppDataSource } from './data-source.js';
 ${schema.tables.map((t) => `import { ${camel(t.name)}Router } from './routes/${safeFileSegment(t.name)}.js';`).join("\n")}
 
-async function main() {
-  await AppDataSource.initialize();
+export async function createApp() {
+  if (!AppDataSource.isInitialized) await AppDataSource.initialize();
   const app = express();
   app.use(express.json());
 ${schema.tables.map((t) => `  app.use('/${safeFileSegment(t.name)}', ${camel(t.name)}Router);`).join("\n")}
@@ -253,9 +294,12 @@ ${schema.tables.map((t) => `  app.use('/${safeFileSegment(t.name)}', ${camel(t.n
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });
   });
-  app.listen(Number(process.env.PORT ?? 3000));
+  return app;
 }
-main();
+
+if (process.env.NODE_ENV !== 'test') {
+  createApp().then((app) => app.listen(Number(process.env.PORT ?? 3000)));
+}
 `,
   });
 
@@ -266,10 +310,12 @@ main();
 ## Setup
 1. Copy \`.env.example\` to \`.env\`
 2. \`npm install\`
-3. Set \`TYPEORM_SYNC=true\` only for local development (default is false; use migrations in production)
+3. Prefer migrations for schema (see below). Set \`TYPEORM_SYNC=true\` only for throwaway local DBs
 4. \`npm run dev\`
 
 Tables: ${schema.tables.map((t) => t.name).join(", ")}
+
+${TYPEORM_MIGRATION_README}
 `,
   });
 
@@ -286,11 +332,17 @@ function renderNestTypeOrm(schema: SchemaModel): ExportArtifact[] {
       {
         name: "generated-nestjs-typeorm",
         private: true,
-        scripts: { build: "nest build", start: "node dist/main.js", "start:dev": "nest start --watch" },
+        scripts: {
+          build: "nest build",
+          start: "node dist/main.js",
+          "start:dev": "nest start --watch",
+          "migration:run": "tsx ./node_modules/typeorm/cli.js migration:run -d src/data-source.ts",
+          "migration:revert": "tsx ./node_modules/typeorm/cli.js migration:revert -d src/data-source.ts",
+          "migration:generate": "tsx ./node_modules/typeorm/cli.js migration:generate -d src/data-source.ts",
+        },
         dependencies: {
           "@nestjs/common": "^11.0.11",
           "@nestjs/core": "^11.0.11",
-          "@nestjs/mapped-types": "^2.1.0",
           "@nestjs/platform-express": "^11.0.11",
           "@nestjs/typeorm": "^11.0.0",
           typeorm: "^0.3.21",
@@ -305,6 +357,7 @@ function renderNestTypeOrm(schema: SchemaModel): ExportArtifact[] {
         devDependencies: {
           "@nestjs/cli": "^11.0.5",
           "@types/node": "^22.13.10",
+          tsx: "^4.19.3",
           typescript: "^5.9.2",
         },
       },
@@ -342,22 +395,50 @@ function renderNestTypeOrm(schema: SchemaModel): ExportArtifact[] {
     path: ".env.example",
     content: `DB_TYPE=better-sqlite3\nDB_NAME=dev.db\nTYPEORM_SYNC=false\nPORT=3000\n`,
   });
+  artifacts.push({
+    path: "src/migrations/.gitkeep",
+    content: "",
+  });
+  artifacts.push({
+    path: "src/data-source.ts",
+    language: "typescript",
+    content: `import 'reflect-metadata';
+import { DataSource } from 'typeorm';
+${schema.tables.map((t) => `import { ${pascal(t.name)} } from './entities/${safeFileSegment(t.name)}.entity';`).join("\n")}
+
+/** CLI DataSource for migrations — synchronize always false here. */
+const AppDataSource = new DataSource({
+  type: (process.env.DB_TYPE as 'better-sqlite3' | 'postgres' | 'mysql' | 'mssql') ?? 'better-sqlite3',
+  host: process.env.DB_HOST,
+  port: process.env.DB_PORT ? Number(process.env.DB_PORT) : undefined,
+  username: process.env.DB_USER,
+  password: process.env.DB_PASS,
+  database: process.env.DB_NAME ?? 'dev.db',
+  synchronize: false,
+  entities: [${schema.tables.map((t) => pascal(t.name)).join(", ")}],
+  migrations: ['src/migrations/*.{ts,js}'],
+  migrationsTableName: 'typeorm_migrations',
+});
+
+export default AppDataSource;
+`,
+  });
 
   for (const table of schema.tables) {
     const file = safeFileSegment(table.name);
     const entity = pascal(table.name);
     const pk = table.primaryKey[0] ?? "id";
     const pkIsNumber = mapTsType(table.columns.find((c) => c.name === pk)?.sqlType ?? "", "integer") === "number";
-    const writable = writableColumns(table);
+    const createCols = table.columns.filter((c) => !c.isExcluded && !c.autoIncrement);
+    const updateCols = writableColumns(table);
     artifacts.push({ path: `src/entities/${file}.entity.ts`, language: "typescript", content: renderTypeOrmEntity(table) });
     artifacts.push({
       path: `src/${file}/${file}.dto.ts`,
       language: "typescript",
-      content: `import { IsOptional, IsString, IsNumber, IsBoolean } from 'class-validator';
-import { PartialType } from '@nestjs/mapped-types';
+      content: `import { IsOptional, IsString, IsNumber, IsInt, IsBoolean } from 'class-validator';
 
 export class Create${entity}Dto {
-${writable
+${createCols
   .map((c) => {
     const opt = c.nullable ? "@IsOptional()\n  " : "";
     return `  ${opt}${typeormDtoDecorator(c.sqlType, c.inferredType)}${propKey(c.name)}${c.nullable ? "?" : "!"}: ${mapTsType(c.sqlType, c.inferredType)};`;
@@ -365,7 +446,13 @@ ${writable
   .join("\n\n")}
 }
 
-export class Update${entity}Dto extends PartialType(Create${entity}Dto) {}
+export class Update${entity}Dto {
+${updateCols
+  .map((c) => {
+    return `  @IsOptional()\n  ${typeormDtoDecorator(c.sqlType, c.inferredType)}${propKey(c.name)}?: ${mapTsType(c.sqlType, c.inferredType)}${c.nullable ? " | null" : ""};`;
+  })
+  .join("\n\n")}
+}
 `,
     });
     artifacts.push({
@@ -487,12 +574,19 @@ export class AppModule {}
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 
-async function bootstrap() {
+export async function createApp() {
   const app = await NestFactory.create(AppModule);
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
+  return app;
+}
+
+async function bootstrap() {
+  const app = await createApp();
   await app.listen(process.env.PORT ?? 3000);
 }
-bootstrap();
+if (process.env.NODE_ENV !== 'test') {
+  bootstrap();
+}
 `,
   });
   artifacts.push({
@@ -502,10 +596,12 @@ bootstrap();
 ## Setup
 1. Copy \`.env.example\` to \`.env\`
 2. \`npm install\`
-3. Set \`TYPEORM_SYNC=true\` only for local development (default is false; use migrations in production)
+3. Prefer migrations for schema (see below). Set \`TYPEORM_SYNC=true\` only for throwaway local DBs
 4. \`npm run start:dev\`
 
 Tables: ${schema.tables.map((t) => t.name).join(", ")}
+
+${TYPEORM_MIGRATION_README}
 `,
   });
   return artifacts;

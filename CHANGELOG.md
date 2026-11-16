@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.2] - 2026-11-16
+
+### Fixed / hardened
+
+- TypeORM Express: create schema allows client-supplied (non-autoincrement) PKs; update schema excludes all PKs; `.strict()` rejects unexpected properties
+- TypeORM Nest: separate Create/Update DTOs (no PartialType PK leak); `@IsInt` for integer columns; `createApp` export for tests
+- TypeORM: migration folder + `migration:run|revert|generate` scripts; Nest CLI DataSource forces `synchronize: false`; README migration guide
+- `validate-generated.mjs`: shell only on Windows for npm/npx `.cmd`; no TLS bypass; `try/finally` temp cleanup; TypeORM Express+Nest SQLite HTTP smokes (CRUD, invalid body, FK) + custom string PK when `better-sqlite3` loads (`CI=true` fails native misses)
+- Docs/SECURITY assessment synced to 0.2.2 limitations (composite PK routes, SQL dialect jobs ≠ Prisma-against-PG)
+
+### Release
+
+- Versions synchronized at **0.2.2** (`root`, `@json-to-sql/core`, `@json-to-sql/cli`)
+
 ## [0.2.1] - 2026-11-16
 
 ### Fixed

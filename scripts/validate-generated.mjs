@@ -352,71 +352,80 @@ console.log('express-typeorm-http-smoke-ok');
     }
   }
 
-  // NestJS TypeORM SQLite HTTP smoke
+  // NestJS TypeORM SQLite HTTP smoke (compile first — tsx skips emitDecoratorMetadata / DI)
   {
     const dir = join(root, "nestjs-typeorm");
     if (!ensureBetterSqlite3(dir, "nestjs-typeorm")) {
       /* warned or failed above */
     } else {
-      writeFileSync(
-        join(dir, "typeorm-http-smoke.mjs"),
-        `
+      const build = run(npxCmd(), ["tsc", "-p", "tsconfig.json"], dir, 180000);
+      if (build.status !== 0) {
+        console.error(build.stdout, build.stderr);
+        console.error("FAIL nestjs-typeorm tsc for smoke");
+        failed = true;
+      } else {
+        writeFileSync(
+          join(dir, "typeorm-http-smoke.cjs"),
+          `
 process.env.NODE_ENV = 'test';
 process.env.TYPEORM_SYNC = 'true';
 process.env.DB_TYPE = 'better-sqlite3';
 process.env.DB_NAME = 'nest-smoke.db';
-const { createApp } = await import('./src/main.ts');
-const app = await createApp();
-await app.listen(0);
-const server = app.getHttpServer();
-const { port } = server.address();
-const base = 'http://127.0.0.1:' + port;
+const { createApp } = require('./dist/main.js');
+(async () => {
+  const app = await createApp();
+  await app.listen(0);
+  const server = app.getHttpServer();
+  const { port } = server.address();
+  const base = 'http://127.0.0.1:' + port;
 
-async function req(method, path, body) {
-  const res = await fetch(base + path, {
-    method,
-    headers: body ? { 'content-type': 'application/json' } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const text = await res.text();
-  let json;
-  try { json = JSON.parse(text); } catch { json = text; }
-  return { status: res.status, json };
-}
+  async function req(method, path, body) {
+    const res = await fetch(base + path, {
+      method,
+      headers: body ? { 'content-type': 'application/json' } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const text = await res.text();
+    let json;
+    try { json = JSON.parse(text); } catch { json = text; }
+    return { status: res.status, json };
+  }
 
-const bad = await req('POST', '/people', { name: 'Ada', unexpected: true });
-if (bad.status !== 400) throw new Error('nestjs-typeorm expected 400 unexpected, got ' + bad.status);
+  const bad = await req('POST', '/people', { name: 'Ada', unexpected: true });
+  if (bad.status !== 400) throw new Error('nestjs-typeorm expected 400 unexpected, got ' + bad.status);
 
-const created = await req('POST', '/people', { name: 'Ada' });
-if (created.status !== 201 && created.status !== 200) throw new Error('nestjs-typeorm create failed: ' + created.status);
-const id = created.json.id;
+  const created = await req('POST', '/people', { name: 'Ada' });
+  if (created.status !== 201 && created.status !== 200) throw new Error('nestjs-typeorm create failed: ' + created.status);
+  const id = created.json.id;
 
-const got = await req('GET', '/people/' + id);
-if (got.status !== 200 || got.json.name !== 'Ada') throw new Error('nestjs-typeorm get failed');
+  const got = await req('GET', '/people/' + id);
+  if (got.status !== 200 || got.json.name !== 'Ada') throw new Error('nestjs-typeorm get failed');
 
-const upd = await req('PUT', '/people/' + id, { name: 'Ada Lovelace' });
-if (upd.status !== 200 || upd.json.name !== 'Ada Lovelace') throw new Error('nestjs-typeorm put failed');
+  const upd = await req('PUT', '/people/' + id, { name: 'Ada Lovelace' });
+  if (upd.status !== 200 || upd.json.name !== 'Ada Lovelace') throw new Error('nestjs-typeorm put failed');
 
-const child = await req('POST', '/people_profile', { people_id: id, city: 'London', tags: 'math' });
-if (child.status !== 201 && child.status !== 200) throw new Error('nestjs-typeorm FK child failed: ' + child.status);
+  const child = await req('POST', '/people_profile', { people_id: id, city: 'London', tags: 'math' });
+  if (child.status !== 201 && child.status !== 200) throw new Error('nestjs-typeorm FK child failed: ' + child.status);
 
-const delC = await req('DELETE', '/people_profile/' + child.json.id);
-if (delC.status !== 200 && delC.status !== 204) throw new Error('nestjs-typeorm child delete failed');
+  const delC = await req('DELETE', '/people_profile/' + child.json.id);
+  if (delC.status !== 200 && delC.status !== 204) throw new Error('nestjs-typeorm child delete failed');
 
-const delP = await req('DELETE', '/people/' + id);
-if (delP.status !== 200 && delP.status !== 204) throw new Error('nestjs-typeorm parent delete failed');
+  const delP = await req('DELETE', '/people/' + id);
+  if (delP.status !== 200 && delP.status !== 204) throw new Error('nestjs-typeorm parent delete failed');
 
-await app.close();
-console.log('nestjs-typeorm-http-smoke-ok');
+  await app.close();
+  console.log('nestjs-typeorm-http-smoke-ok');
+})().catch((err) => { console.error(err); process.exit(1); });
 `
-      );
-      const smoke = run(npxCmd(), ["tsx", "typeorm-http-smoke.mjs"], dir, 180000);
-      if (smoke.status !== 0 || !String(smoke.stdout).includes("nestjs-typeorm-http-smoke-ok")) {
-        console.error(smoke.stdout, smoke.stderr);
-        console.error("FAIL nestjs-typeorm HTTP smoke");
-        failed = true;
-      } else {
-        console.log("ok nestjs-typeorm HTTP smoke");
+        );
+        const smoke = run("node", ["typeorm-http-smoke.cjs"], dir, 180000);
+        if (smoke.status !== 0 || !String(smoke.stdout).includes("nestjs-typeorm-http-smoke-ok")) {
+          console.error(smoke.stdout, smoke.stderr);
+          console.error("FAIL nestjs-typeorm HTTP smoke");
+          failed = true;
+        } else {
+          console.log("ok nestjs-typeorm HTTP smoke");
+        }
       }
     }
   }

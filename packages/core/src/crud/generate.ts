@@ -79,7 +79,8 @@ ${cols
       return `  @PrimaryGeneratedColumn()\n  ${propKey(c.name)}!: number;`;
     }
     if (c.isPrimaryKey) {
-      return `  @PrimaryColumn()\n  ${propKey(c.name)}!: ${mapTsType(c.sqlType, c.inferredType)};`;
+      const colType = typeormColumnType(c.sqlType, c.inferredType);
+      return `  @PrimaryColumn({ type: ${jsString(colType)} })\n  ${propKey(c.name)}!: ${mapTsType(c.sqlType, c.inferredType)};`;
     }
     return `  @Column({ type: ${jsString(typeormColumnType(c.sqlType, c.inferredType))}, nullable: ${c.nullable} })\n  ${propKey(c.name)}${c.nullable ? "?" : "!"}: ${mapTsType(c.sqlType, c.inferredType)};`;
   })
@@ -503,7 +504,7 @@ export class ${entity}Service {
     artifacts.push({
       path: `src/${file}/${file}.controller.ts`,
       language: "typescript",
-      content: `import { Body, Controller, Delete, Get, Param, ${pkIsNumber ? "ParseIntPipe, " : ""}Post, Put, Query } from '@nestjs/common';
+      content: `import { Body, Controller, Delete, Get, Param, ${pkIsNumber ? "ParseIntPipe, " : ""}Post, Put, Query, ValidationPipe } from '@nestjs/common';
 import { Create${entity}Dto, Update${entity}Dto } from './${file}.dto';
 import { ${entity}Service } from './${file}.service';
 
@@ -516,10 +517,15 @@ export class ${entity}Controller {
   @Get(':id') get(@Param('id'${pkIsNumber ? ", ParseIntPipe" : ""}) id: ${pkIsNumber ? "number" : "string"}) {
     return this.service.findOne(id);
   }
-  @Post() create(@Body() body: Create${entity}Dto) { return this.service.create(body); }
-  @Put(':id') update(@Param('id'${pkIsNumber ? ", ParseIntPipe" : ""}) id: ${pkIsNumber ? "number" : "string"}, @Body() body: Update${entity}Dto) {
-    return this.service.update(id, body);
-  }
+  @Post() create(
+    @Body(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true, expectedType: Create${entity}Dto }))
+    body: Create${entity}Dto,
+  ) { return this.service.create(body); }
+  @Put(':id') update(
+    @Param('id'${pkIsNumber ? ", ParseIntPipe" : ""}) id: ${pkIsNumber ? "number" : "string"},
+    @Body(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true, expectedType: Update${entity}Dto }))
+    body: Update${entity}Dto,
+  ) { return this.service.update(id, body); }
   @Delete(':id') remove(@Param('id'${pkIsNumber ? ", ParseIntPipe" : ""}) id: ${pkIsNumber ? "number" : "string"}) {
     return this.service.remove(id);
   }

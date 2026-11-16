@@ -233,7 +233,7 @@ describe("Prisma schema generation", () => {
     table.primaryKey = ["code"];
     const files = generateCrud(schema, parseCrudTargetFlag("express-typeorm"));
     const entity = files.find((f) => f.path.includes(".entity.ts"))!.content;
-    expect(entity).toContain("@PrimaryColumn()");
+    expect(entity).toContain('@PrimaryColumn({ type: "varchar" })');
     expect(entity).toContain("code");
     const route = files.find((f) => f.path.includes("routes/"))!.content;
     expect(route).toContain('"name"');

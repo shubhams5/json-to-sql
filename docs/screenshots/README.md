@@ -1,14 +1,19 @@
 # Screenshots
 
-Capture UI screenshots after `npm run dev` and place them here for the README:
+Real UI captures for the README (Playwright, local app on port 3011).
 
-1. `json-tab.png` — JSON editor + preview table
-2. `schema-tab.png` — schema designer
-3. `er-tab.png` — ER diagram
-4. `sql-tab.png` — generated SQL output
+| File | Tab |
+|------|-----|
+| `json-tab.png` | JSON input |
+| `schema-tab.png` | Schema designer |
+| `er-tab.png` | ER diagram |
+| `sql-tab.png` | Generated SQL |
+| `crud-tab.png` | CRUD generator |
 
-Suggested README embed:
+Refresh:
 
-```md
-![JSON tab](docs/screenshots/json-tab.png)
+```bash
+CAPTURE_SCREENSHOTS=1 npx playwright test e2e/capture-screenshots.spec.js
 ```
+
+Do not invent or AI-generate product UI screenshots.

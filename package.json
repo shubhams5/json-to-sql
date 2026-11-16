@@ -26,6 +26,7 @@
     "lint": "eslint",
     "test": "npm run test -w @json-to-sql/core",
     "test:e2e": "playwright test",
+    "screenshots": "CAPTURE_SCREENSHOTS=1 playwright test e2e/capture-screenshots.spec.js",
     "test:generated": "node scripts/validate-generated.mjs",
     "test:consumer": "node scripts/consumer-import.mjs",
     "verify:npm": "node scripts/verify-npm-packages.mjs",

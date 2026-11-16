@@ -1,8 +1,70 @@
 # JSON to SQL
 
+[![npm @json-to-sql/core](https://img.shields.io/npm/v/@json-to-sql/core.svg?label=%40json-to-sql%2Fcore)](https://www.npmjs.com/package/@json-to-sql/core)
+[![npm @json-to-sql/cli](https://img.shields.io/npm/v/@json-to-sql/cli.svg?label=%40json-to-sql%2Fcli)](https://www.npmjs.com/package/@json-to-sql/cli)
+[![CI](https://github.com/shubhams5/json-to-sql/actions/workflows/ci.yml/badge.svg)](https://github.com/shubhams5/json-to-sql/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D22.12-brightgreen)](https://nodejs.org)
+
 Local-first open-source developer tool: import JSON, infer a database schema, design relationships, generate dialect-specific SQL, and export CRUD starters.
 
 No paid APIs. No remote conversion service. Generation only — this tool never executes SQL.
+
+## Demo
+
+![JSON input tab](docs/screenshots/json-tab.png)
+
+![Schema designer](docs/screenshots/schema-tab.png)
+
+![ER diagram](docs/screenshots/er-tab.png)
+
+![Generated SQL](docs/screenshots/sql-tab.png)
+
+![CRUD generator](docs/screenshots/crud-tab.png)
+
+Screenshots captured from the local web UI (`docs/screenshots/`). Refresh with:
+
+```bash
+CAPTURE_SCREENSHOTS=1 npx playwright test e2e/capture-screenshots.spec.js
+```
+
+## Install
+
+### Library (`@json-to-sql/core`)
+
+```bash
+npm install @json-to-sql/core
+```
+
+```ts
+import {
+  parseJsonInput,
+  inferSchema,
+  generateFullSqlBundle,
+  generateCrud,
+  parseCrudTargetFlag,
+} from "@json-to-sql/core";
+
+const { rows } = parseJsonInput(`[{"id":1,"name":"Ada","orders":[{"sku":"A","qty":1}]}]`);
+const schema = inferSchema(rows, { dialect: "postgres", rootTableName: "people" });
+const sql = generateFullSqlBundle(schema, rows);
+const files = generateCrud(schema, parseCrudTargetFlag("express-prisma"));
+```
+
+### CLI (`@json-to-sql/cli`)
+
+```bash
+npm install -g @json-to-sql/cli
+# or one-shot:
+npx @json-to-sql/cli --help
+```
+
+```bash
+json2sql data.json --dialect postgres --table users --out ./out --crud express-prisma
+cat data.json | json2sql - --out ./out --dialect sqlite
+```
+
+Requires **Node.js ≥ 22.12**.
 
 ## Features
 
@@ -20,9 +82,11 @@ No paid APIs. No remote conversion service. Generation only — this tool never 
 - Export: SQL, TypeScript interfaces, JSON Schema, CSV, ZIP bundle
 - Web UI + CLI (`json2sql`)
 
-## Quick start
+## Quick start (this repo / web UI)
 
 ```bash
+git clone https://github.com/shubhams5/json-to-sql.git
+cd json-to-sql
 npm install
 npm run build:packages
 npm run dev
@@ -39,7 +103,7 @@ npm start              # serves ./out (static). Do not use next start with outpu
 
 Or deploy the `out/` folder to any static host (GitHub Pages, Netlify, S3, nginx).
 
-### CLI
+### CLI from the monorepo
 
 ```bash
 npm run cli -- sample.json --dialect postgres --table users --out ./out --crud express-prisma

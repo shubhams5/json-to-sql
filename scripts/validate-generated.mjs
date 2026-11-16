@@ -139,20 +139,27 @@ try {
       } else {
         console.log(`ok ${key} prisma schema structure`);
       }
-      const validate = run(npxCmd(), ["prisma", "validate"], dir);
-      const validateOut = `${validate.stdout || ""}\n${validate.stderr || ""}`;
-      if (validate.status !== 0) {
-        if (/binaries\.prisma\.sh|ECONNRESET|certificate|503|aborted/i.test(validateOut)) {
-          failOrWarnEngine(`${key} prisma validate`, validateOut);
-        } else {
-          console.error(validateOut);
-          console.error(`FAIL ${key} prisma validate`);
-          failed = true;
-        }
+    // prisma validate reads env("DATABASE_URL") from schema even for SQLite
+    const prismaEnv = { DATABASE_URL: "file:./dev.db" };
+    try {
+      copyFileSync(join(dir, ".env.example"), join(dir, ".env"));
+    } catch {
+      writeFileSync(join(dir, ".env"), 'DATABASE_URL="file:./dev.db"\n');
+    }
+    const validate = run(npxCmd(), ["prisma", "validate"], dir, 300000, prismaEnv);
+    const validateOut = `${validate.stdout || ""}\n${validate.stderr || ""}`;
+    if (validate.status !== 0) {
+      if (/binaries\.prisma\.sh|ECONNRESET|certificate|503|aborted/i.test(validateOut)) {
+        failOrWarnEngine(`${key} prisma validate`, validateOut);
       } else {
-        console.log(`ok ${key} prisma validate`);
+        console.error(validateOut);
+        console.error(`FAIL ${key} prisma validate`);
+        failed = true;
       }
-      const gen = run(npxCmd(), ["prisma", "generate"], dir);
+    } else {
+      console.log(`ok ${key} prisma validate`);
+    }
+    const gen = run(npxCmd(), ["prisma", "generate"], dir, 300000, prismaEnv);
       const genOut = `${gen.stdout || ""}\n${gen.stderr || ""}`;
       if (gen.status !== 0) {
         if (/binaries\.prisma\.sh|ECONNRESET|certificate|503|aborted|Failed to fetch the engine/i.test(genOut)) {

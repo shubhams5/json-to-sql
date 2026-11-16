@@ -13,4 +13,6 @@ Bump `@json-to-sql/core` / `@json-to-sql/cli` to `0.3.0`. Regenerate TypeORM CRU
 
 ## Publish
 
-Requires GitHub secret `NPM_TOKEN` (npm granular token with publish on `@json-to-sql/*`). Tag `v0.3.0` after CI green.
+- npm: `@json-to-sql/core@0.3.0` and `@json-to-sql/cli@0.3.0` published (org `json-to-sql`)
+- Install: `npm install @json-to-sql/core` / `npm install -g @json-to-sql/cli`
+- Future releases: configure Trusted Publishing on both packages (workflow `release.yml`); no permanent `NPM_TOKEN` required

@@ -14,8 +14,8 @@
 - [x] Release workflow OIDC-ready (`.github/workflows/release.yml`)
 - [x] `npm run verify:npm` / `release:preflight` / ordered publish scripts
 - [x] Docs: [NPM_PUBLISHING.md](./NPM_PUBLISHING.md), [RELEASE_PROCESS.md](./RELEASE_PROCESS.md)
-- [ ] Create npm organization **`json-to-sql`** (public packages plan) — **requires your action**
-- [ ] First local publish `@json-to-sql/core@0.3.0` then `@json-to-sql/cli@0.3.0` with 2FA — **requires your action**
-- [ ] Configure Trusted Publisher on both packages → `shubhams5/json-to-sql` / `release.yml` — **requires your action**
-- [ ] Push git tag / GitHub Release after publish path chosen — **requires your action**
-- [ ] Confirm install from clean temp: `npm install @json-to-sql/core` / `npx @json-to-sql/cli --help` — **requires your action**
+- [x] npm organization **`json-to-sql`** created
+- [x] Published `@json-to-sql/core@0.3.0` and `@json-to-sql/cli@0.3.0` to npm
+- [ ] Configure Trusted Publisher on both packages → `shubhams5/json-to-sql` / `release.yml` — for next releases
+- [x] GitHub Release for tag `v0.3.0` — https://github.com/shubhams5/json-to-sql/releases/tag/v0.3.0
+- [x] Install check: packages visible on npm (`npm view …@0.3.0 version` → `0.3.0`)

@@ -1,0 +1,14 @@
+[
+  {
+    "id": 1,
+    "name": "Ada",
+    "profile": {
+      "city": "London",
+      "tags": ["math", "computing"]
+    },
+    "orders": [
+      { "sku": "BOOK-1", "qty": 2 },
+      { "sku": "BOOK-2", "qty": 1 }
+    ]
+  }
+]

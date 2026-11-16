@@ -12,6 +12,16 @@
 
 # testing
 /coverage
+/test-results
+/playwright-report
+/blob-report
+
+# packages
+packages/*/dist
+packages/*/node_modules
+
+# local CLI output
+/tmp-out
 
 # next.js
 /.next/

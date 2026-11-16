@@ -1,0 +1,24 @@
+{
+  "name": "@json-to-sql/cli",
+  "version": "0.1.0",
+  "description": "CLI for JSON to SQL / CRUD generation",
+  "type": "module",
+  "bin": {
+    "json2sql": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/cli.js"
+  },
+  "dependencies": {
+    "@json-to-sql/core": "0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "typescript": "^5.9.2"
+  },
+  "license": "MIT"
+}

@@ -46,6 +46,16 @@ npm run cli -- sample.json --dialect postgres --table users --out ./out --crud e
 cat sample.json | npm run cli -- - --out ./out --dialect sqlite
 ```
 
+#### `--crud` targets
+
+| Flag | Framework | ORM | Status |
+|------|-----------|-----|--------|
+| `express-prisma` | Express | Prisma | Production |
+| `express-typeorm` | Express | TypeORM | Production |
+| `nestjs-prisma` | NestJS | Prisma | Production |
+| `nestjs-typeorm` | NestJS | TypeORM | Production |
+| `express-js` / `express-ts` / `nestjs` | Express / NestJS | none | **Experimental** |
+
 ## Workspace layout
 
 | Path | Role |
@@ -88,7 +98,7 @@ cat sample.json | npm run cli -- - --out ./out --dialect sqlite
 |--------|---------|
 | `npm run dev` | Build core + start Next.js |
 | `npm test` | Vitest unit + SQLite execution tests |
-| `npm run test:generated` | Generate CRUD targets + typecheck Express+TypeORM |
+| `npm run test:generated` | Generate all four CRUD targets, `tsc`, Prisma validate/generate (CI-mandatory), TypeORM SQLite smokes when native loads |
 | `npm run test:e2e` | Playwright smoke test |
 | `npm run build` | Packages + static export to `out/` |
 | `npm start` | Serve `out/` |

@@ -31,5 +31,8 @@
     "url": "https://github.com/shubhams5/json-to-sql",
     "directory": "packages/cli"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "license": "MIT"
 }

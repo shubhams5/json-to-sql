@@ -2,6 +2,7 @@
 /**
  * Generate all four CRUD targets, prisma validate, tsc each target,
  * and smoke-test Express+Prisma against SQLite when possible.
+ * When CI=true, Prisma engine-download skips are failures.
  */
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync, copyFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -28,19 +29,17 @@ const schema = inferSchema(rows, { dialect: "sqlite", rootTableName: "people" })
 const targets = ["express-prisma", "express-typeorm", "nestjs-prisma", "nestjs-typeorm"];
 const root = mkdtempSync(join(tmpdir(), "j2s-gen-"));
 let failed = false;
+const ciStrict = process.env.CI === "true";
 
 function run(cmd, args, cwd, timeout = 300000, extraEnv = {}) {
+  const env = { ...process.env, ...extraEnv };
+  // Do not force TLS reject off; callers may set NODE_TLS_REJECT_UNAUTHORIZED explicitly.
   return spawnSync(cmd, args, {
     cwd,
     encoding: "utf8",
     shell: true,
     timeout,
-    env: {
-      ...process.env,
-      // Corporate SSL inspection often breaks Prisma engine downloads locally.
-      NODE_TLS_REJECT_UNAUTHORIZED: process.env.NODE_TLS_REJECT_UNAUTHORIZED ?? "0",
-      ...extraEnv,
-    },
+    env,
   });
 }
 
@@ -54,6 +53,15 @@ function prismaSchemaLooksValid(dir) {
   );
 }
 
+function failOrWarnEngine(label, out) {
+  if (ciStrict) {
+    console.error(out);
+    console.error(`FAIL ${label} (engine download blocked in CI)`);
+    failed = true;
+  } else {
+    console.warn(`WARN ${label} skipped (engine download blocked in this environment)`);
+  }
+}
 
 for (const key of targets) {
   const dir = join(root, key);
@@ -95,7 +103,7 @@ for (const key of targets) {
     const validateOut = `${validate.stdout || ""}\n${validate.stderr || ""}`;
     if (validate.status !== 0) {
       if (/binaries\.prisma\.sh|ECONNRESET|certificate|503|aborted/i.test(validateOut)) {
-        console.warn(`WARN ${key} prisma validate skipped (engine download blocked in this environment)`);
+        failOrWarnEngine(`${key} prisma validate`, validateOut);
       } else {
         console.error(validateOut);
         console.error(`FAIL ${key} prisma validate`);
@@ -108,7 +116,7 @@ for (const key of targets) {
     const genOut = `${gen.stdout || ""}\n${gen.stderr || ""}`;
     if (gen.status !== 0) {
       if (/binaries\.prisma\.sh|ECONNRESET|certificate|503|aborted|Failed to fetch the engine/i.test(genOut)) {
-        console.warn(`WARN ${key} prisma generate skipped (engine download blocked in this environment)`);
+        failOrWarnEngine(`${key} prisma generate`, genOut);
       } else {
         console.error(genOut);
         console.error(`FAIL ${key} prisma generate`);
@@ -130,16 +138,18 @@ for (const key of targets) {
     } else {
       console.log(`ok ${key} tsc`);
     }
+  } else if (ciStrict) {
+    console.error(`FAIL ${key} tsc (prisma client not generated in CI)`);
+    failed = true;
   } else {
     console.error(`SKIP ${key} tsc (prisma client not generated)`);
   }
 }
 
-// Express+Prisma SQLite CRUD smoke (requires successful prisma generate)
+// Express+Prisma SQLite CRUD + HTTP smoke (requires successful prisma generate)
 const smokeDir = join(root, "express-prisma");
 const clientExists = (() => {
   try {
-    // Real generated client, not the stub package entry
     readFileSync(join(smokeDir, "node_modules/.prisma/client/default.js"));
     return true;
   } catch {
@@ -153,7 +163,7 @@ if (clientExists) {
   const pushOut = `${push.stdout || ""}\n${push.stderr || ""}`;
   if (push.status !== 0) {
     if (/binaries\.prisma\.sh|ECONNRESET|certificate|503|Failed to fetch the engine/i.test(pushOut)) {
-      console.warn("WARN express-prisma db push skipped (engine download blocked)");
+      failOrWarnEngine("express-prisma db push", pushOut);
     } else {
       console.error(pushOut);
       console.error("FAIL express-prisma db push");
@@ -181,9 +191,55 @@ console.log('crud-smoke-ok');
     } else {
       console.log("ok express-prisma CRUD smoke");
     }
+
+    writeFileSync(
+      join(smokeDir, "http-smoke.mjs"),
+      `
+process.env.NODE_ENV = 'test';
+const { default: app } = await import('./src/main.ts');
+const server = app.listen(0);
+const { port } = server.address();
+const base = 'http://127.0.0.1:' + port;
+
+async function req(method, path, body) {
+  const res = await fetch(base + path, {
+    method,
+    headers: body ? { 'content-type': 'application/json' } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  let json;
+  try { json = JSON.parse(text); } catch { json = text; }
+  return { status: res.status, json };
+}
+
+const bad = await req('POST', '/people', { name: 'Ada', unexpected: true });
+if (bad.status !== 400) throw new Error('expected 400 for extra key, got ' + bad.status);
+
+const ok = await req('POST', '/people', { name: 'Ada' });
+if (ok.status !== 201) throw new Error('expected 201 create, got ' + ok.status);
+
+const filter = await req('GET', '/people?filter=' + encodeURIComponent(JSON.stringify({ hack: 1 })));
+if (filter.status !== 400) throw new Error('expected 400 bad filter, got ' + filter.status);
+
+server.close();
+console.log('http-smoke-ok');
+`
+    );
+    const httpSmoke = run("npx", ["tsx", "http-smoke.mjs"], smokeDir, 60000);
+    if (httpSmoke.status !== 0 || !String(httpSmoke.stdout).includes("http-smoke-ok")) {
+      console.error(httpSmoke.stdout, httpSmoke.stderr);
+      console.error("FAIL express-prisma HTTP smoke");
+      failed = true;
+    } else {
+      console.log("ok express-prisma HTTP smoke");
+    }
   }
+} else if (ciStrict) {
+  console.error("FAIL express-prisma CRUD/HTTP smoke (Prisma engines unavailable in CI)");
+  failed = true;
 } else {
-  console.warn("WARN express-prisma CRUD smoke skipped (Prisma engines unavailable in this environment; CI runs full smoke)");
+  console.warn("WARN express-prisma CRUD/HTTP smoke skipped (Prisma engines unavailable; CI fails this)");
 }
 
 rmSync(root, { recursive: true, force: true });

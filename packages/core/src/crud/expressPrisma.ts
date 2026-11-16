@@ -1,9 +1,11 @@
 import { camel, jsString, mapTsType, pascal, propKey, safeFileSegment } from "../codegen/safe.js";
 import type { ExportArtifact, SchemaModel } from "../types.js";
+import { assertSchemaSinglePrimaryKeys } from "./assertSinglePk.js";
 import { databaseUrlExample, renderPrismaSchema, stringSearchColumns } from "./prismaSchema.js";
 import { renderPrismaErrorHandler, renderQueryHelpers } from "./querySecurity.js";
 
 export function renderExpressPrisma(schema: SchemaModel): ExportArtifact[] {
+  assertSchemaSinglePrimaryKeys(schema, "express-prisma");
   const artifacts: ExportArtifact[] = [];
   artifacts.push({ path: "prisma/schema.prisma", content: renderPrismaSchema(schema), language: "typescript" });
   artifacts.push({
@@ -128,7 +130,7 @@ ${camel(table.name)}Router.get('/', async (req, res, next) => {
 ${camel(table.name)}Router.get('/:id', async (req, res, next) => {
   try {
     const id = ${pkIsNumber ? "Number(req.params.id)" : "req.params.id"};
-    if (${pkIsNumber ? "Number.isNaN(id)" : "!id"}) return res.status(400).json({ error: 'Invalid id' });
+    if (${pkIsNumber ? "!Number.isInteger(id)" : "!id"}) return res.status(400).json({ error: 'Invalid id' });
     const item = await prisma.${modelKey}.findUnique({ where: { ${propKey(pk)}: id as never } });
     if (!item) return res.status(404).json({ error: 'Not found' });
     res.json(item);
@@ -156,7 +158,7 @@ ${camel(table.name)}Router.post('/', async (req, res, next) => {
 ${camel(table.name)}Router.put('/:id', async (req, res, next) => {
   try {
     const id = ${pkIsNumber ? "Number(req.params.id)" : "req.params.id"};
-    if (${pkIsNumber ? "Number.isNaN(id)" : "!id"}) return res.status(400).json({ error: 'Invalid id' });
+    if (${pkIsNumber ? "!Number.isInteger(id)" : "!id"}) return res.status(400).json({ error: 'Invalid id' });
     if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
       return res.status(400).json({ error: 'Body must be an object' });
     }
@@ -173,7 +175,7 @@ ${camel(table.name)}Router.put('/:id', async (req, res, next) => {
 ${camel(table.name)}Router.delete('/:id', async (req, res, next) => {
   try {
     const id = ${pkIsNumber ? "Number(req.params.id)" : "req.params.id"};
-    if (${pkIsNumber ? "Number.isNaN(id)" : "!id"}) return res.status(400).json({ error: 'Invalid id' });
+    if (${pkIsNumber ? "!Number.isInteger(id)" : "!id"}) return res.status(400).json({ error: 'Invalid id' });
     await prisma.${modelKey}.delete({ where: { ${propKey(pk)}: id as never } });
     res.status(204).send();
   } catch (err) {

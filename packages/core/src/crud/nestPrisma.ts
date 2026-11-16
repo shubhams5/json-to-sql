@@ -1,6 +1,8 @@
 import { camel, jsString, mapTsType, pascal, propKey, safeFileSegment } from "../codegen/safe.js";
 import type { ExportArtifact, SchemaModel } from "../types.js";
-import { databaseUrlExample, renderPrismaSchema, stringSearchColumns, writableColumns } from "./prismaSchema.js";
+import { assertSchemaSinglePrimaryKeys } from "./assertSinglePk.js";
+import { databaseUrlExample, renderPrismaSchema, writableColumns } from "./prismaSchema.js";
+import { renderNestQueryHelpers } from "./querySecurity.js";
 
 function decoratorFor(sqlType: string, inferred: string): string {
   const t = mapTsType(sqlType, inferred);
@@ -10,6 +12,7 @@ function decoratorFor(sqlType: string, inferred: string): string {
 }
 
 export function renderNestPrisma(schema: SchemaModel): ExportArtifact[] {
+  assertSchemaSinglePrimaryKeys(schema, "nestjs-prisma");
   const artifacts: ExportArtifact[] = [];
   artifacts.push({ path: "prisma/schema.prisma", content: renderPrismaSchema(schema), language: "typescript" });
   artifacts.push({ path: ".env.example", content: databaseUrlExample(schema.dialect) });
@@ -99,7 +102,6 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     const modelKey = camel(table.name);
     const pkIsNumber = mapTsType(table.columns.find((c) => c.name === pk)?.sqlType ?? "", "integer") === "number";
     const writable = writableColumns(table);
-    const searchCols = stringSearchColumns(table);
     const sortAllow = table.columns.filter((c) => !c.isExcluded).map((c) => c.name);
 
     artifacts.push({
@@ -123,13 +125,20 @@ export class Update${entity}Dto extends PartialType(Create${entity}Dto) {}
     });
 
     artifacts.push({
+      path: `src/${file}/query.util.ts`,
+      language: "typescript",
+      content: renderNestQueryHelpers(table),
+    });
+
+    artifacts.push({
       path: `src/${file}/${file}.service.ts`,
       language: "typescript",
-      content: `import { Injectable, NotFoundException } from '@nestjs/common';
+      content: `import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
 import { Create${entity}Dto, Update${entity}Dto } from './${file}.dto';
+import { SEARCH_COLS } from './query.util';
 
-const SEARCH_COLS = ${JSON.stringify(searchCols)} as const;
 const SORT_ALLOW = ${JSON.stringify(sortAllow)} as const;
 
 @Injectable()
@@ -160,19 +169,27 @@ export class ${entity}Service {
   }
 
   create(data: Create${entity}Dto) {
-    return this.prisma.${modelKey}.create({ data: data as never });
+    return this.prisma.${modelKey}.create({ data: data as never }).catch(mapPrisma);
   }
 
   async update(id: ${pkIsNumber ? "number" : "string"}, data: Update${entity}Dto) {
     await this.findOne(id);
-    return this.prisma.${modelKey}.update({ where: { ${propKey(pk)}: id as never }, data: data as never });
+    return this.prisma.${modelKey}.update({ where: { ${propKey(pk)}: id as never }, data: data as never }).catch(mapPrisma);
   }
 
   async remove(id: ${pkIsNumber ? "number" : "string"}) {
     await this.findOne(id);
-    await this.prisma.${modelKey}.delete({ where: { ${propKey(pk)}: id as never } });
+    await this.prisma.${modelKey}.delete({ where: { ${propKey(pk)}: id as never } }).catch(mapPrisma);
     return true;
   }
+}
+
+function mapPrisma(err: unknown): never {
+  if (err instanceof Prisma.PrismaClientKnownRequestError) {
+    if (err.code === 'P2025') throw new NotFoundException();
+    if (err.code === 'P2002') throw new ConflictException('Conflict');
+  }
+  throw err;
 }
 `,
     });
@@ -183,6 +200,7 @@ export class ${entity}Service {
       content: `import { Body, Controller, Delete, Get, Param, ${pkIsNumber ? "ParseIntPipe, " : ""}Post, Put, Query, BadRequestException } from '@nestjs/common';
 import { Create${entity}Dto, Update${entity}Dto } from './${file}.dto';
 import { ${entity}Service } from './${file}.service';
+import { asQueryString, sanitizeFilter } from './query.util';
 
 @Controller('${file}')
 export class ${entity}Controller {
@@ -192,16 +210,29 @@ export class ${entity}Controller {
   list(
     @Query('page') page = '1',
     @Query('pageSize') pageSize = '20',
-    @Query('search') search?: string,
-    @Query('sort') sort?: string,
-    @Query('filter') filterRaw?: string,
+    @Query('search') searchRaw?: unknown,
+    @Query('sort') sortRaw?: unknown,
+    @Query('filter') filterRaw?: unknown,
   ) {
-    let filter: Record<string, unknown> | undefined;
-    if (filterRaw) {
-      try { filter = JSON.parse(filterRaw); }
-      catch { throw new BadRequestException('Invalid filter JSON'); }
+    try {
+      const search = asQueryString(searchRaw, 'search');
+      const sort = asQueryString(sortRaw, 'sort');
+      let filter: Record<string, unknown> | undefined;
+      const filterStr = asQueryString(filterRaw, 'filter');
+      if (filterStr) {
+        let parsed: unknown;
+        try { parsed = JSON.parse(filterStr); }
+        catch { throw new BadRequestException('Invalid filter JSON'); }
+        filter = sanitizeFilter(parsed);
+      }
+      return this.service.findAll(Number(page), Number(pageSize), search, sort, filter);
+    } catch (err) {
+      if (err instanceof BadRequestException) throw err;
+      if (err && typeof err === 'object' && 'status' in err) {
+        throw new BadRequestException(err instanceof Error ? err.message : 'Bad query');
+      }
+      throw err;
     }
-    return this.service.findAll(Number(page), Number(pageSize), search, sort, filter);
   }
 
   @Get(':id')

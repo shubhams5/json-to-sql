@@ -3,16 +3,31 @@ import {
   jsString,
   mapTsType,
   pascal,
-  propAccess,
   propKey,
   safeFileSegment,
 } from "../codegen/safe.js";
 import type { CrudOrm, CrudTarget, ExportArtifact, SchemaModel, TableModel } from "../types.js";
+import { assertSchemaSinglePrimaryKeys } from "./assertSinglePk.js";
 import { renderExpressPrisma } from "./expressPrisma.js";
 import { renderNestPrisma } from "./nestPrisma.js";
-import { renderPrismaSchema } from "./prismaSchema.js";
+import { renderPrismaSchema, writableColumns } from "./prismaSchema.js";
+import { zodTypeForColumn } from "./querySecurity.js";
 
 export { renderPrismaSchema };
+
+function typeormDtoDecorator(sqlType: string, inferred: string): string {
+  const t = mapTsType(sqlType, inferred);
+  if (t === "number") return "@IsNumber()\n  ";
+  if (t === "boolean") return "@IsBoolean()\n  ";
+  return "@IsString()\n  ";
+}
+
+function dbTypeExample(dialect: SchemaModel["dialect"]): string {
+  if (dialect === "sqlite") return "better-sqlite3";
+  if (dialect === "postgres") return "postgres";
+  if (dialect === "mysql") return "mysql";
+  return "mssql";
+}
 
 function resolveOrm(target: CrudTarget): CrudOrm {
   return target.orm ?? "none";
@@ -52,6 +67,7 @@ ${cols
 }
 
 function renderExpressTypeOrm(schema: SchemaModel): ExportArtifact[] {
+  assertSchemaSinglePrimaryKeys(schema, "express-typeorm");
   const artifacts: ExportArtifact[] = [];
   artifacts.push({
     path: "package.json",
@@ -108,7 +124,7 @@ function renderExpressTypeOrm(schema: SchemaModel): ExportArtifact[] {
   });
   artifacts.push({
     path: ".env.example",
-    content: `DB_TYPE=${schema.dialect === "postgres" ? "postgres" : schema.dialect}\nDB_HOST=localhost\nDB_PORT=5432\nDB_USER=user\nDB_PASS=pass\nDB_NAME=app\nPORT=3000\n`,
+    content: `DB_TYPE=${dbTypeExample(schema.dialect)}\nDB_HOST=localhost\nDB_PORT=5432\nDB_USER=user\nDB_PASS=pass\nDB_NAME=app\nTYPEORM_SYNC=false\nPORT=3000\n`,
   });
   artifacts.push({
     path: "src/data-source.ts",
@@ -124,7 +140,7 @@ export const AppDataSource = new DataSource({
   username: process.env.DB_USER,
   password: process.env.DB_PASS,
   database: process.env.DB_NAME ?? 'dev.db',
-  synchronize: true,
+  synchronize: process.env.TYPEORM_SYNC === 'true',
   entities: [${schema.tables.map((t) => pascal(t.name)).join(", ")}],
 });
 `,
@@ -134,6 +150,8 @@ export const AppDataSource = new DataSource({
     const file = safeFileSegment(table.name);
     const entity = pascal(table.name);
     const pk = table.primaryKey[0] ?? "id";
+    const pkIsNumber = mapTsType(table.columns.find((c) => c.name === pk)?.sqlType ?? "", "integer") === "number";
+    const writable = writableColumns(table);
     artifacts.push({
       path: `src/entities/${file}.entity.ts`,
       language: "typescript",
@@ -143,11 +161,18 @@ export const AppDataSource = new DataSource({
       path: `src/routes/${file}.ts`,
       language: "typescript",
       content: `import { Router } from 'express';
+import { z } from 'zod';
 import { AppDataSource } from '../data-source.js';
 import { ${entity} } from '../entities/${file}.entity.js';
 
 export const ${camel(table.name)}Router = Router();
 const repo = () => AppDataSource.getRepository(${entity});
+
+const createSchema = z.object({
+${writable.map((c) => `  ${JSON.stringify(c.name)}: ${zodTypeForColumn(c.sqlType, c.inferredType)}${c.nullable ? ".optional().nullable()" : ""},`).join("\n")}
+}).strict();
+
+const updateSchema = createSchema.partial();
 
 ${camel(table.name)}Router.get('/', async (req, res, next) => {
   try {
@@ -160,7 +185,9 @@ ${camel(table.name)}Router.get('/', async (req, res, next) => {
 
 ${camel(table.name)}Router.get('/:id', async (req, res, next) => {
   try {
-    const item = await repo().findOneBy({ ${propKey(pk)}: req.params.id as never });
+    const id = ${pkIsNumber ? "Number(req.params.id)" : "req.params.id"};
+    if (${pkIsNumber ? "!Number.isInteger(id)" : "!id"}) return res.status(400).json({ error: 'Invalid id' });
+    const item = await repo().findOneBy({ ${propKey(pk)}: id as never });
     if (!item) return res.status(404).json({ error: 'Not found' });
     res.json(item);
   } catch (err) { next(err); }
@@ -168,7 +195,12 @@ ${camel(table.name)}Router.get('/:id', async (req, res, next) => {
 
 ${camel(table.name)}Router.post('/', async (req, res, next) => {
   try {
-    const created = repo().create(req.body);
+    if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
+      return res.status(400).json({ error: 'Body must be an object' });
+    }
+    const parsed = createSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ errors: parsed.error.flatten() });
+    const created = repo().create(parsed.data as never);
     const saved = await repo().save(created);
     res.status(201).json(saved);
   } catch (err) { next(err); }
@@ -176,10 +208,17 @@ ${camel(table.name)}Router.post('/', async (req, res, next) => {
 
 ${camel(table.name)}Router.put('/:id', async (req, res, next) => {
   try {
-    const existing = await repo().findOneBy({ ${propKey(pk)}: req.params.id as never });
+    const id = ${pkIsNumber ? "Number(req.params.id)" : "req.params.id"};
+    if (${pkIsNumber ? "!Number.isInteger(id)" : "!id"}) return res.status(400).json({ error: 'Invalid id' });
+    const existing = await repo().findOneBy({ ${propKey(pk)}: id as never });
     if (!existing) return res.status(404).json({ error: 'Not found' });
-    const data = { ...req.body };
-    delete ${propAccess("data", pk)};
+    if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
+      return res.status(400).json({ error: 'Body must be an object' });
+    }
+    const parsed = updateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ errors: parsed.error.flatten() });
+    const data = { ...parsed.data } as Record<string, unknown>;
+    delete data[${jsString(pk)}];
     Object.assign(existing, data);
     res.json(await repo().save(existing));
   } catch (err) { next(err); }
@@ -187,7 +226,9 @@ ${camel(table.name)}Router.put('/:id', async (req, res, next) => {
 
 ${camel(table.name)}Router.delete('/:id', async (req, res, next) => {
   try {
-    const result = await repo().delete(req.params.id);
+    const id = ${pkIsNumber ? "Number(req.params.id)" : "req.params.id"};
+    if (${pkIsNumber ? "!Number.isInteger(id)" : "!id"}) return res.status(400).json({ error: 'Invalid id' });
+    const result = await repo().delete(id);
     if (!result.affected) return res.status(404).json({ error: 'Not found' });
     res.status(204).send();
   } catch (err) { next(err); }
@@ -225,7 +266,8 @@ main();
 ## Setup
 1. Copy \`.env.example\` to \`.env\`
 2. \`npm install\`
-3. \`npm run dev\`
+3. Set \`TYPEORM_SYNC=true\` only for local development (default is false; use migrations in production)
+4. \`npm run dev\`
 
 Tables: ${schema.tables.map((t) => t.name).join(", ")}
 `,
@@ -235,7 +277,7 @@ Tables: ${schema.tables.map((t) => t.name).join(", ")}
 }
 
 function renderNestTypeOrm(schema: SchemaModel): ExportArtifact[] {
-  // Reuse entities from TypeORM express and wrap Nest modules
+  assertSchemaSinglePrimaryKeys(schema, "nestjs-typeorm");
   const artifacts: ExportArtifact[] = [];
   artifacts.push({
     path: "package.json",
@@ -248,6 +290,7 @@ function renderNestTypeOrm(schema: SchemaModel): ExportArtifact[] {
         dependencies: {
           "@nestjs/common": "^11.0.11",
           "@nestjs/core": "^11.0.11",
+          "@nestjs/mapped-types": "^2.1.0",
           "@nestjs/platform-express": "^11.0.11",
           "@nestjs/typeorm": "^11.0.0",
           typeorm: "^0.3.21",
@@ -297,20 +340,41 @@ function renderNestTypeOrm(schema: SchemaModel): ExportArtifact[] {
   });
   artifacts.push({
     path: ".env.example",
-    content: `DB_TYPE=better-sqlite3\nDB_NAME=dev.db\nPORT=3000\n`,
+    content: `DB_TYPE=better-sqlite3\nDB_NAME=dev.db\nTYPEORM_SYNC=false\nPORT=3000\n`,
   });
 
   for (const table of schema.tables) {
     const file = safeFileSegment(table.name);
     const entity = pascal(table.name);
     const pk = table.primaryKey[0] ?? "id";
+    const pkIsNumber = mapTsType(table.columns.find((c) => c.name === pk)?.sqlType ?? "", "integer") === "number";
+    const writable = writableColumns(table);
     artifacts.push({ path: `src/entities/${file}.entity.ts`, language: "typescript", content: renderTypeOrmEntity(table) });
+    artifacts.push({
+      path: `src/${file}/${file}.dto.ts`,
+      language: "typescript",
+      content: `import { IsOptional, IsString, IsNumber, IsBoolean } from 'class-validator';
+import { PartialType } from '@nestjs/mapped-types';
+
+export class Create${entity}Dto {
+${writable
+  .map((c) => {
+    const opt = c.nullable ? "@IsOptional()\n  " : "";
+    return `  ${opt}${typeormDtoDecorator(c.sqlType, c.inferredType)}${propKey(c.name)}${c.nullable ? "?" : "!"}: ${mapTsType(c.sqlType, c.inferredType)};`;
+  })
+  .join("\n\n")}
+}
+
+export class Update${entity}Dto extends PartialType(Create${entity}Dto) {}
+`,
+    });
     artifacts.push({
       path: `src/${file}/${file}.service.ts`,
       language: "typescript",
       content: `import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { Create${entity}Dto, Update${entity}Dto } from './${file}.dto';
 import { ${entity} } from '../entities/${file}.entity';
 
 @Injectable()
@@ -329,14 +393,15 @@ export class ${entity}Service {
     return item;
   }
 
-  create(data: Partial<${entity}>) {
+  create(data: Create${entity}Dto) {
     return this.repo.save(this.repo.create(data));
   }
 
-  async update(id: string | number, data: Partial<${entity}>) {
+  async update(id: string | number, data: Update${entity}Dto) {
     const existing = await this.findOne(id);
-    Object.assign(existing, data);
-    delete (existing as any)[${jsString(pk)}];
+    const patch = { ...data } as Record<string, unknown>;
+    delete patch[${jsString(pk)}];
+    Object.assign(existing, patch);
     return this.repo.save(existing);
   }
 
@@ -351,7 +416,8 @@ export class ${entity}Service {
     artifacts.push({
       path: `src/${file}/${file}.controller.ts`,
       language: "typescript",
-      content: `import { Body, Controller, Delete, Get, Param, Post, Put, Query } from '@nestjs/common';
+      content: `import { Body, Controller, Delete, Get, Param, ${pkIsNumber ? "ParseIntPipe, " : ""}Post, Put, Query } from '@nestjs/common';
+import { Create${entity}Dto, Update${entity}Dto } from './${file}.dto';
 import { ${entity}Service } from './${file}.service';
 
 @Controller('${file}')
@@ -360,10 +426,16 @@ export class ${entity}Controller {
   @Get() list(@Query('page') page = '1', @Query('pageSize') pageSize = '20') {
     return this.service.findAll(Number(page), Number(pageSize));
   }
-  @Get(':id') get(@Param('id') id: string) { return this.service.findOne(id); }
-  @Post() create(@Body() body: Record<string, unknown>) { return this.service.create(body); }
-  @Put(':id') update(@Param('id') id: string, @Body() body: Record<string, unknown>) { return this.service.update(id, body); }
-  @Delete(':id') remove(@Param('id') id: string) { return this.service.remove(id); }
+  @Get(':id') get(@Param('id'${pkIsNumber ? ", ParseIntPipe" : ""}) id: ${pkIsNumber ? "number" : "string"}) {
+    return this.service.findOne(id);
+  }
+  @Post() create(@Body() body: Create${entity}Dto) { return this.service.create(body); }
+  @Put(':id') update(@Param('id'${pkIsNumber ? ", ParseIntPipe" : ""}) id: ${pkIsNumber ? "number" : "string"}, @Body() body: Update${entity}Dto) {
+    return this.service.update(id, body);
+  }
+  @Delete(':id') remove(@Param('id'${pkIsNumber ? ", ParseIntPipe" : ""}) id: ${pkIsNumber ? "number" : "string"}) {
+    return this.service.remove(id);
+  }
 }
 `,
     });
@@ -399,7 +471,7 @@ ${schema.tables.map((t) => `import { ${pascal(t.name)}Module } from './${safeFil
     TypeOrmModule.forRoot({
       type: (process.env.DB_TYPE as 'better-sqlite3') ?? 'better-sqlite3',
       database: process.env.DB_NAME ?? 'dev.db',
-      synchronize: true,
+      synchronize: process.env.TYPEORM_SYNC === 'true',
       entities: [${schema.tables.map((t) => pascal(t.name)).join(", ")}],
     }),
     ${schema.tables.map((t) => `${pascal(t.name)}Module`).join(", ")}
@@ -411,11 +483,13 @@ export class AppModule {}
   artifacts.push({
     path: "src/main.ts",
     language: "typescript",
-    content: `import { NestFactory } from '@nestjs/core';
+    content: `import { ValidationPipe } from '@nestjs/common';
+import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
   await app.listen(process.env.PORT ?? 3000);
 }
 bootstrap();
@@ -428,7 +502,8 @@ bootstrap();
 ## Setup
 1. Copy \`.env.example\` to \`.env\`
 2. \`npm install\`
-3. \`npm run start:dev\`
+3. Set \`TYPEORM_SYNC=true\` only for local development (default is false; use migrations in production)
+4. \`npm run start:dev\`
 
 Tables: ${schema.tables.map((t) => t.name).join(", ")}
 `,

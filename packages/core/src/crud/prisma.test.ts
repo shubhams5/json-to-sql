@@ -15,6 +15,17 @@ describe("Prisma schema generation", () => {
     expect(prisma).toContain("@db.Decimal(12, 2)");
   });
 
+  it("sqlite Decimal omits @db.Decimal native attr", () => {
+    let schema = inferSchema([{ id: 1, amount: "12.50" }], { dialect: "sqlite", rootTableName: "payments" });
+    schema = applyColumnOverride(schema, "payments", "amount", {
+      sqlType: "DECIMAL(12,2)",
+      inferredType: "string",
+    });
+    const prisma = renderPrismaSchema(schema);
+    expect(prisma).toMatch(/amount\s+Decimal/);
+    expect(prisma).not.toContain("@db.Decimal");
+  });
+
   it("emits named relations and respects onDelete", () => {
     const schema = inferSchema([{ id: 1, profile: { city: "X" } }], {
       dialect: "postgres",
@@ -116,5 +127,65 @@ describe("Prisma schema generation", () => {
     expect(service).not.toContain("void search");
     const dto = files.find((f) => f.path.endsWith(".dto.ts"))!.content;
     expect(dto).toContain("PartialType");
+  });
+
+  it("nestjs prisma uses sanitizeFilter and rejects relation ops", () => {
+    const schema = inferSchema([{ id: 1, name: "Ada" }], { dialect: "sqlite", rootTableName: "users" });
+    const files = generateCrud(schema, parseCrudTargetFlag("nestjs-prisma"));
+    const util = files.find((f) => f.path.endsWith("query.util.ts"))!.content;
+    const controller = files.find((f) => f.path.endsWith(".controller.ts") && f.path.includes("users"))!.content;
+    expect(util).toContain("sanitizeFilter");
+    expect(util).toContain("relation filters are not allowed");
+    expect(controller).toContain("sanitizeFilter");
+    expect(controller).toContain("asQueryString");
+    expect(files.find((f) => f.path.endsWith(".service.ts") && f.path.includes("users"))!.content).toContain(
+      "ConflictException"
+    );
+  });
+
+  it("express prisma uses Number.isInteger for numeric ids", () => {
+    const schema = inferSchema([{ id: 1, name: "Ada" }], { dialect: "sqlite", rootTableName: "users" });
+    const files = generateCrud(schema, parseCrudTargetFlag("express-prisma"));
+    const route = files.find((f) => f.path.includes("routes/"))!.content;
+    expect(route).toContain("Number.isInteger(id)");
+    expect(route).not.toContain("Number.isNaN(id)");
+  });
+
+  it("rejects composite PK for route generators", () => {
+    const schema = inferSchema([{ id: 1, name: "Ada" }], { dialect: "sqlite", rootTableName: "users" });
+    schema.tables[0].primaryKey = ["id", "name"];
+    schema.tables[0].columns.forEach((c) => {
+      c.isPrimaryKey = schema.tables[0].primaryKey.includes(c.name);
+    });
+    expect(() => generateCrud(schema, parseCrudTargetFlag("express-prisma"))).toThrow(/composite|Single-column PK/i);
+    expect(() => generateCrud(schema, parseCrudTargetFlag("nestjs-prisma"))).toThrow(/composite|Single-column PK/i);
+    expect(() => generateCrud(schema, parseCrudTargetFlag("express-typeorm"))).toThrow(/composite|Single-column PK/i);
+    expect(() => generateCrud(schema, parseCrudTargetFlag("nestjs-typeorm"))).toThrow(/composite|Single-column PK/i);
+  });
+
+  it("typeorm gates synchronize and blocks mass-assignment", () => {
+    const schema = inferSchema([{ id: 1, name: "Ada" }], { dialect: "sqlite", rootTableName: "users" });
+    const expressFiles = generateCrud(schema, parseCrudTargetFlag("express-typeorm"));
+    const ds = expressFiles.find((f) => f.path.endsWith("data-source.ts"))!.content;
+    expect(ds).toContain("process.env.TYPEORM_SYNC === 'true'");
+    expect(ds).toMatch(/synchronize:\s*process\.env\.TYPEORM_SYNC/);
+    expect(ds).not.toMatch(/synchronize:\s*true\b/);
+    const route = expressFiles.find((f) => f.path.includes("routes/"))!.content;
+    expect(route).toContain("createSchema.safeParse");
+    expect(route).toContain(".strict()");
+    expect(route).not.toMatch(/repo\(\)\.create\(req\.body\)/);
+    expect(expressFiles.find((f) => f.path === ".env.example")!.content).toContain("DB_TYPE=better-sqlite3");
+
+    const nestFiles = generateCrud(schema, parseCrudTargetFlag("nestjs-typeorm"));
+    const appMod = nestFiles.find((f) => f.path.endsWith("app.module.ts"))!.content;
+    expect(appMod).toContain("TYPEORM_SYNC");
+    expect(appMod).not.toMatch(/synchronize:\s*true/);
+    const service = nestFiles.find((f) => f.path.endsWith(".service.ts") && f.path.includes("users"))!.content;
+    expect(service).toContain("const patch = { ...data }");
+    expect(service).not.toMatch(/delete \(existing as any\)/);
+    const main = nestFiles.find((f) => f.path.endsWith("main.ts"))!.content;
+    expect(main).toContain("forbidNonWhitelisted: true");
+    const dto = nestFiles.find((f) => f.path.endsWith(".dto.ts"))!.content;
+    expect(dto).toContain("CreateUsersDto");
   });
 });

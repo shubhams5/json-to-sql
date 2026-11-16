@@ -28,15 +28,25 @@ function prismaAction(action: ReferentialAction): string {
   }
 }
 
-export function prismaScalarType(col: ColumnModel): { type: string; attrs: string[] } {
+export function prismaScalarType(
+  col: ColumnModel,
+  dialect: SchemaModel["dialect"] = "postgres"
+): { type: string; attrs: string[] } {
   const t = (col.sqlType || col.inferredType).toLowerCase();
   const attrs: string[] = [];
   if (t.includes("decimal") || t.includes("numeric") || t.includes("money")) {
     const ps = parseDecimalPrecision(col.sqlType);
-    if (ps) attrs.push(`@db.Decimal(${ps.precision}, ${ps.scale})`);
+    // Prisma native Decimal attr is not valid on SQLite
+    if (ps && (dialect === "postgres" || dialect === "mysql" || dialect === "mssql")) {
+      attrs.push(`@db.Decimal(${ps.precision}, ${ps.scale})`);
+    }
     return { type: "Decimal", attrs };
   }
-  if (t.includes("uuid") || t === "uniqueidentifier") return { type: "String", attrs: ["@db.Uuid"] };
+  if (t.includes("uuid") || t === "uniqueidentifier") {
+    if (dialect === "postgres") return { type: "String", attrs: ["@db.Uuid"] };
+    if (dialect === "mssql") return { type: "String", attrs: ["@db.UniqueIdentifier"] };
+    return { type: "String", attrs: [] };
+  }
   if (t.includes("tinyint(1)") || t === "bit" || t.includes("bool")) return { type: "Boolean", attrs: [] };
   if (t.includes("bigint")) return { type: "BigInt", attrs: [] };
   if (t.includes("int") || t.includes("serial")) return { type: "Int", attrs: [] };
@@ -117,7 +127,7 @@ export function renderPrismaSchema(schema: SchemaModel): string {
     for (const col of table.columns.filter((c) => !c.isExcluded)) {
       const field = prismaFieldName(col);
       usedFieldNames.add(field);
-      const { type, attrs } = prismaScalarType(col);
+      const { type, attrs } = prismaScalarType(col, schema.dialect);
       const optional = col.nullable && !col.isPrimaryKey ? "?" : "";
       const colAttrs = [...attrs];
       if (!isCompositePk && col.isPrimaryKey) colAttrs.unshift("@id");

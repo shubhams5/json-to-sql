@@ -12,9 +12,9 @@ Current suite (Vitest in `packages/core`):
 - Schema inference + overrides
 - Dialect listing / escaping / CREATE TABLE
 - Legacy DML INSERT/UPDATE/DELETE
-- Export + CRUD generators
+- Export + CRUD generators (Prisma Decimal dialect gates, Nest `sanitizeFilter`, TypeORM sync/mass-assignment, composite PK reject)
 
-As of 2026-11-16: **22 unit tests passing**, plus Playwright smoke (`e2e/smoke.spec.js`).
+As of 2026-11-16 (0.2.1 correctness): **55 unit tests** in core, plus Playwright smoke (`e2e/smoke.spec.js`), generated-project validation (`npm run test:generated`), and consumer pack import (`npm run test:consumer`).
 
 Optional HTML coverage:
 

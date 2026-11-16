@@ -5,8 +5,7 @@ export const siteConfig = {
   title: "JSON to SQL | Local schema & CRUD generator",
   description:
     "Open-source developer tool that turns JSON into database schemas, dialect SQL, and Express/NestJS CRUD starters. Runs fully locally — no paid APIs.",
-  /** Set after push, e.g. "https://github.com/you/json-to-sql" */
-  github: "",
+  github: "https://github.com/shubhams5/json-to-sql",
   docsPath: "/docs",
   licensePath: "/license",
   securityPath: "/security",

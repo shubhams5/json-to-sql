@@ -1,6 +1,6 @@
 {
   "name": "@json-to-sql/core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "JSON to SQL schema inference, dialect SQL generation, and CRUD codegen",
   "type": "module",
   "main": "./dist/index.js",
@@ -9,22 +9,36 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
-      "require": "./dist/index.js",
       "default": "./dist/index.js"
     }
   },
   "files": [
     "dist",
-    "templates"
+    "LICENSE",
+    "README.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest"
   },
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/shubhams5/json-to-sql",
+    "directory": "packages/core"
+  },
   "devDependencies": {
+    "@types/node": "^22.13.10",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
+  },
+  "typesVersions": {
+    "*": {
+      "*": ["dist/index.d.ts"]
+    }
   },
   "license": "MIT"
 }

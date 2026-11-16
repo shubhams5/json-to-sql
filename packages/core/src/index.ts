@@ -6,3 +6,4 @@ export * from "./dialects/index.js";
 export * from "./sql/generate.js";
 export * from "./crud/generate.js";
 export * from "./export/index.js";
+export * from "./codegen/safe.js";

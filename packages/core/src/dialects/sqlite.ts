@@ -30,12 +30,25 @@ export class SqliteDialect extends BaseDialect {
   }
 
   autoIncrementClause(column: ColumnModel): string {
-    if (column.isPrimaryKey) return "AUTOINCREMENT";
+    // Must be emitted as INTEGER PRIMARY KEY AUTOINCREMENT inline (see createTable)
+    if (column.isPrimaryKey && (column.inferredType === "integer" || column.sqlType.toUpperCase().includes("INT"))) {
+      return "PRIMARY KEY AUTOINCREMENT";
+    }
     return "";
   }
 
   quoteLiteral(value: JsonValue): string {
+    if (value === null || value === undefined) return "NULL";
     if (typeof value === "boolean") return value ? "1" : "0";
-    return super.quoteLiteral(value);
+    if (typeof value === "number") {
+      if (!Number.isFinite(value)) {
+        throw new Error(`Non-finite numeric value cannot be emitted as SQL literal: ${value}`);
+      }
+      return String(value);
+    }
+    if (typeof value === "object") {
+      return this.quoteLiteral(JSON.stringify(value));
+    }
+    return `'${String(value).replace(/'/g, "''")}'`;
   }
 }

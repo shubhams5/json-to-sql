@@ -1,7 +1,14 @@
 {
   "name": "json-to-sql",
-  "version": "0.1.0",
-  "private": false,
+  "version": "0.2.0",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/shubhams5/json-to-sql"
+  },
   "workspaces": [
     "packages/*"
   ],
@@ -11,11 +18,13 @@
     "build:cli": "npm run build -w @json-to-sql/cli",
     "build:packages": "npm run build:core && npm run build:cli",
     "build": "npm run build:packages && next build --turbopack",
-    "start": "next start",
+    "start": "npx --yes serve@14 out",
     "lint": "eslint",
     "test": "npm run test -w @json-to-sql/core",
     "test:e2e": "playwright test",
-    "cli": "npm run build:packages && node packages/cli/dist/cli.js"
+    "test:generated": "node scripts/validate-generated.mjs",
+    "cli": "npm run build:packages && node packages/cli/dist/cli.js",
+    "pack:check": "npm pack -w @json-to-sql/core --dry-run && npm pack -w @json-to-sql/cli --dry-run"
   },
   "dependencies": {
     "@codemirror/lang-javascript": "^6.2.4",
@@ -27,7 +36,6 @@
     "@xyflow/react": "^12.8.2",
     "jszip": "^3.10.1",
     "next": "15.5.4",
-    "prismjs": "^1.30.0",
     "react": "19.1.0",
     "react-dom": "19.1.0"
   },

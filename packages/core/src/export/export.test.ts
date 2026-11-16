@@ -38,8 +38,14 @@ describe("export + crud", () => {
     expect(artifacts.some((a) => a.path.includes("crud/"))).toBe(true);
   });
 
-  it("generates nestjs modules", () => {
-    const files = generateCrud(schema, { runtime: "nodejs", framework: "nestjs", language: "typescript" });
+  it("generates nestjs-prisma modules", () => {
+    const files = generateCrud(schema, {
+      runtime: "nodejs",
+      framework: "nestjs",
+      language: "typescript",
+      orm: "prisma",
+    });
     expect(files.some((f) => f.path.includes(".module.ts"))).toBe(true);
+    expect(files.some((f) => f.path === "prisma/schema.prisma")).toBe(true);
   });
 });

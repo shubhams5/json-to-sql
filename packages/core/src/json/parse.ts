@@ -1,5 +1,12 @@
-import { DEFAULT_LIMITS, LimitError } from "../limits.js";
+import { DEFAULT_LIMITS, LimitError, mergeLimits } from "../limits.js";
 import type { JsonObject, JsonValue, ParseLimits, ParseResult } from "../types.js";
+
+function utf8ByteLength(input: string): number {
+  if (typeof Buffer !== "undefined") {
+    return Buffer.byteLength(input, "utf8");
+  }
+  return new TextEncoder().encode(input).length;
+}
 
 function countNodes(value: JsonValue, depth: number, limits: ParseLimits, counter: { n: number }): void {
   if (depth > limits.maxDepth) {
@@ -22,9 +29,11 @@ function countNodes(value: JsonValue, depth: number, limits: ParseLimits, counte
   }
 }
 
-export function parseJsonInput(input: string, limits: ParseLimits = DEFAULT_LIMITS): ParseResult {
-  if (input.length > limits.maxBytes) {
-    throw new LimitError(`JSON exceeds max size of ${limits.maxBytes} bytes`);
+export function parseJsonInput(input: string, limits: Partial<ParseLimits> = DEFAULT_LIMITS): ParseResult {
+  const resolved = mergeLimits(limits);
+  const bytes = utf8ByteLength(input);
+  if (bytes > resolved.maxBytes) {
+    throw new LimitError(`JSON exceeds max size of ${resolved.maxBytes} bytes (got ${bytes})`);
   }
   const trimmed = input.trim();
   if (!trimmed) {
@@ -39,7 +48,7 @@ export function parseJsonInput(input: string, limits: ParseLimits = DEFAULT_LIMI
     throw new Error(`JSON parse error: ${message}`);
   }
 
-  countNodes(data, 0, limits, { n: 0 });
+  countNodes(data, 0, resolved, { n: 0 });
 
   const warnings: string[] = [];
   let rows: JsonObject[] = [];
@@ -59,6 +68,15 @@ export function parseJsonInput(input: string, limits: ParseLimits = DEFAULT_LIMI
   } else {
     warnings.push("Primitive JSON root; wrapping as single-column row");
     rows = [{ value: data }];
+  }
+
+  if (resolved.maxRows && rows.length > resolved.maxRows) {
+    throw new LimitError(`JSON exceeds max row count of ${resolved.maxRows}`);
+  }
+
+  const colCount = getColumns(rows).length;
+  if (resolved.maxColumns && colCount > resolved.maxColumns) {
+    throw new LimitError(`JSON exceeds max column count of ${resolved.maxColumns}`);
   }
 
   return { data, rows, warnings };

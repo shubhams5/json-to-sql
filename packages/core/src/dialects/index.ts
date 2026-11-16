@@ -13,9 +13,10 @@ const dialects: Record<DbDialectId, Dialect> = {
 };
 
 export function getDialect(id: DbDialectId): Dialect {
-  const dialect = dialects[id];
-  if (!dialect) throw new Error(`Unknown dialect: ${id}`);
-  return dialect;
+  if (!Object.prototype.hasOwnProperty.call(dialects, id)) {
+    throw new Error(`Unknown dialect: ${id}`);
+  }
+  return dialects[id];
 }
 
 export function listDialects(): Array<{ value: DbDialectId; label: string }> {

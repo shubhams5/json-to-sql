@@ -1,31 +1,60 @@
 "use client";
 
+import { renameColumn, renameTable, validateSchema } from "@json-to-sql/core";
+
+const SQL_TYPES = {
+  postgres: ["INTEGER", "BIGINT", "DOUBLE PRECISION", "BOOLEAN", "TEXT", "JSONB", "UUID", "TIMESTAMP"],
+  mysql: ["INT", "BIGINT", "DOUBLE", "TINYINT(1)", "VARCHAR(255)", "TEXT", "JSON", "DATETIME"],
+  mssql: ["INT", "BIGINT", "FLOAT", "BIT", "NVARCHAR(255)", "NVARCHAR(MAX)", "DATETIME2"],
+  sqlite: ["INTEGER", "REAL", "TEXT", "BLOB"],
+};
+
 export default function SchemaDesigner({ schema, onChange }) {
   if (!schema) {
     return <p className="text-sm text-zinc-600 dark:text-zinc-400">Import valid JSON to infer a schema.</p>;
   }
 
-  const updateTableName = (oldName, newName) => {
-    const next = {
-      ...schema,
-      rootTableName: schema.rootTableName === oldName ? newName : schema.rootTableName,
-      tables: schema.tables.map((table) => {
-        if (table.name !== oldName) {
-          return {
-            ...table,
-            foreignKeys: table.foreignKeys.map((fk) => ({
-              ...fk,
-              refTable: fk.refTable === oldName ? newName : fk.refTable,
-            })),
-          };
-        }
-        return { ...table, name: newName };
-      }),
-    };
-    onChange(next);
+  const issues = validateSchema(schema);
+  const typeOptions = SQL_TYPES[schema.dialect] ?? SQL_TYPES.postgres;
+
+  const updateTableName = (oldName, draft) => {
+    try {
+      onChange(renameTable(schema, oldName, draft));
+    } catch (err) {
+      // Keep typing draft locally only when invalid — fall back to raw update with slug on blur not available; show via issues
+      console.warn(err instanceof Error ? err.message : err);
+    }
   };
 
   const updateColumn = (tableName, columnName, patch) => {
+    if (Object.prototype.hasOwnProperty.call(patch, "name") && patch.name !== columnName) {
+      try {
+        let next = renameColumn(schema, tableName, columnName, patch.name);
+        const rest = { ...patch };
+        delete rest.name;
+        if (Object.keys(rest).length) {
+          next = {
+            ...next,
+            tables: next.tables.map((table) => {
+              if (table.name !== tableName) return table;
+              const columns = table.columns.map((col) =>
+                col.name === patch.name || col.name === columnName ? { ...col, ...rest } : col
+              );
+              return {
+                ...table,
+                columns,
+                primaryKey: columns.filter((c) => c.isPrimaryKey).map((c) => c.name),
+              };
+            }),
+          };
+        }
+        onChange(next);
+      } catch (err) {
+        console.warn(err instanceof Error ? err.message : err);
+      }
+      return;
+    }
+
     const next = {
       ...schema,
       tables: schema.tables.map((table) => {
@@ -41,8 +70,32 @@ export default function SchemaDesigner({ schema, onChange }) {
     onChange(next);
   };
 
+  const updateFk = (tableName, fkId, patch) => {
+    onChange({
+      ...schema,
+      tables: schema.tables.map((table) => {
+        if (table.name !== tableName) return table;
+        return {
+          ...table,
+          foreignKeys: table.foreignKeys.map((fk) => (fk.id === fkId ? { ...fk, ...patch } : fk)),
+        };
+      }),
+    });
+  };
+
   return (
     <div className="flex max-h-[520px] min-w-0 flex-col gap-4 overflow-y-auto">
+      {issues.length > 0 && (
+        <ul className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
+          {issues.map((issue, i) => (
+            <li key={i}>
+              [{issue.level}] {issue.table ? `${issue.table}: ` : ""}
+              {issue.message}
+            </li>
+          ))}
+        </ul>
+      )}
+
       <div className="flex flex-wrap items-center gap-3">
         <label className="text-sm text-zinc-600 dark:text-zinc-300">Nested strategy</label>
         <select
@@ -55,8 +108,11 @@ export default function SchemaDesigner({ schema, onChange }) {
         </select>
       </div>
 
-      {schema.tables.map((table) => (
-        <div key={table.name} className="rounded-lg border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-700 dark:bg-zinc-900/60">
+      {schema.tables.map((table, tableIndex) => (
+        <div
+          key={table.sourcePath + "-" + tableIndex}
+          className="rounded-lg border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-700 dark:bg-zinc-900/60"
+        >
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <span className="text-xs uppercase tracking-wide text-zinc-500">Table</span>
             <input
@@ -80,10 +136,14 @@ export default function SchemaDesigner({ schema, onChange }) {
                 </tr>
               </thead>
               <tbody>
-                {table.columns.map((col) => (
-                  <tr key={col.name} className="border-b border-zinc-100 dark:border-zinc-800">
+                {table.columns.map((col, colIndex) => (
+                  <tr key={col.originalName + "-" + colIndex} className="border-b border-zinc-100 dark:border-zinc-800">
                     <td className="py-1 pr-2">
-                      <input type="checkbox" checked={!col.isExcluded} onChange={(e) => updateColumn(table.name, col.name, { isExcluded: !e.target.checked })} />
+                      <input
+                        type="checkbox"
+                        checked={!col.isExcluded}
+                        onChange={(e) => updateColumn(table.name, col.name, { isExcluded: !e.target.checked })}
+                      />
                     </td>
                     <td className="py-1 pr-2">
                       <input
@@ -94,19 +154,38 @@ export default function SchemaDesigner({ schema, onChange }) {
                     </td>
                     <td className="py-1 pr-2">
                       <input
+                        list={`sql-types-${schema.dialect}`}
                         className="w-full rounded border border-zinc-300 bg-white px-2 py-1 font-mono text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
                         value={col.sqlType}
                         onChange={(e) => updateColumn(table.name, col.name, { sqlType: e.target.value })}
                       />
                     </td>
                     <td className="py-1 pr-2">
-                      <input type="checkbox" checked={col.isPrimaryKey} onChange={(e) => updateColumn(table.name, col.name, { isPrimaryKey: e.target.checked, nullable: e.target.checked ? false : col.nullable })} />
+                      <input
+                        type="checkbox"
+                        checked={col.isPrimaryKey}
+                        onChange={(e) =>
+                          updateColumn(table.name, col.name, {
+                            isPrimaryKey: e.target.checked,
+                            nullable: e.target.checked ? false : col.nullable,
+                          })
+                        }
+                      />
                     </td>
                     <td className="py-1 pr-2">
-                      <input type="checkbox" checked={col.nullable} disabled={col.isPrimaryKey} onChange={(e) => updateColumn(table.name, col.name, { nullable: e.target.checked })} />
+                      <input
+                        type="checkbox"
+                        checked={col.nullable}
+                        disabled={col.isPrimaryKey}
+                        onChange={(e) => updateColumn(table.name, col.name, { nullable: e.target.checked })}
+                      />
                     </td>
                     <td className="py-1 pr-2">
-                      <input type="checkbox" checked={col.isUnique} onChange={(e) => updateColumn(table.name, col.name, { isUnique: e.target.checked })} />
+                      <input
+                        type="checkbox"
+                        checked={col.isUnique}
+                        onChange={(e) => updateColumn(table.name, col.name, { isUnique: e.target.checked })}
+                      />
                     </td>
                   </tr>
                 ))}
@@ -114,13 +193,49 @@ export default function SchemaDesigner({ schema, onChange }) {
             </table>
           </div>
 
+          <datalist id={`sql-types-${schema.dialect}`}>
+            {typeOptions.map((t) => (
+              <option key={t} value={t} />
+            ))}
+          </datalist>
+
           {table.foreignKeys.length > 0 && (
-            <div className="mt-3 text-xs text-zinc-600 dark:text-zinc-400">
-              FKs:{" "}
+            <div className="mt-3 space-y-2 text-xs text-zinc-600 dark:text-zinc-400">
+              <p className="font-semibold text-zinc-700 dark:text-zinc-300">Foreign keys</p>
               {table.foreignKeys.map((fk) => (
-                <span key={fk.id} className="mr-2 inline-block rounded bg-zinc-200 px-2 py-1 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200">
-                  {fk.columns.join(",")} → {fk.refTable}({fk.refColumns.join(",")})
-                </span>
+                <div key={fk.id} className="flex flex-wrap items-center gap-2 rounded bg-zinc-200 px-2 py-1 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200">
+                  <span>
+                    {fk.columns.join(",")} → {fk.refTable}({fk.refColumns.join(",")})
+                  </span>
+                  <label>
+                    ON DELETE
+                    <select
+                      className="ml-1 rounded border border-zinc-400 bg-white text-zinc-900 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100"
+                      value={fk.onDelete}
+                      onChange={(e) => updateFk(table.name, fk.id, { onDelete: e.target.value })}
+                    >
+                      {["NO ACTION", "RESTRICT", "CASCADE", "SET NULL", "SET DEFAULT"].map((a) => (
+                        <option key={a} value={a}>
+                          {a}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    ON UPDATE
+                    <select
+                      className="ml-1 rounded border border-zinc-400 bg-white text-zinc-900 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100"
+                      value={fk.onUpdate}
+                      onChange={(e) => updateFk(table.name, fk.id, { onUpdate: e.target.value })}
+                    >
+                      {["NO ACTION", "RESTRICT", "CASCADE", "SET NULL", "SET DEFAULT"].map((a) => (
+                        <option key={a} value={a}>
+                          {a}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
               ))}
             </div>
           )}

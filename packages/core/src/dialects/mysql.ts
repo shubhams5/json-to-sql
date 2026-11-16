@@ -29,12 +29,33 @@ export class MysqlDialect extends BaseDialect {
     }
   }
 
-  autoIncrementClause(_column: ColumnModel): string {
+  autoIncrementClause(column: ColumnModel): string {
+    if (column.inferredType !== "integer" && !column.sqlType.toUpperCase().includes("INT")) {
+      return "";
+    }
     return "AUTO_INCREMENT";
   }
 
   quoteLiteral(value: JsonValue): string {
+    if (value === null || value === undefined) return "NULL";
     if (typeof value === "boolean") return value ? "1" : "0";
-    return super.quoteLiteral(value);
+    if (typeof value === "number") {
+      if (!Number.isFinite(value)) {
+        throw new Error(`Non-finite numeric value cannot be emitted as SQL literal: ${value}`);
+      }
+      return String(value);
+    }
+    if (typeof value === "object") {
+      return this.quoteLiteral(JSON.stringify(value));
+    }
+    // Escape backslash first, then quote, NUL, and control chars for NO_BACKSLASH_ESCAPES off
+    const escaped = String(value)
+      .replace(/\\/g, "\\\\")
+      .replace(/'/g, "''")
+      .replace(/\0/g, "\\0")
+      .replace(/\n/g, "\\n")
+      .replace(/\r/g, "\\r")
+      .replace(/\x1a/g, "\\Z");
+    return `'${escaped}'`;
   }
 }

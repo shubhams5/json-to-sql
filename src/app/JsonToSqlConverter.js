@@ -73,11 +73,11 @@ export default function JsonToSqlConverter() {
   const [tab, setTab] = useState("json");
   const [themeDark, setThemeDark] = useState(true);
   const [nestedStrategy, setNestedStrategy] = useState("child_tables");
-  const [crudFramework, setCrudFramework] = useState("express");
-  const [crudLanguage, setCrudLanguage] = useState("typescript");
+  const [crudTargetKey, setCrudTargetKey] = useState("express-prisma");
   const [crudPreview, setCrudPreview] = useState("");
   const [exportPreview, setExportPreview] = useState("");
   const [selectedExportPath, setSelectedExportPath] = useState("");
+  const [schemaDirty, setSchemaDirty] = useState(false);
 
   useEffect(() => {
     const sync = () => setThemeDark(document.documentElement.classList.contains("dark"));
@@ -88,6 +88,7 @@ export default function JsonToSqlConverter() {
   }, []);
 
   useEffect(() => {
+    if (schemaDirty) return;
     try {
       const next = inferSchema(rows, {
         dialect: dbType,
@@ -100,17 +101,24 @@ export default function JsonToSqlConverter() {
     } catch (err) {
       setParseErrors([err instanceof Error ? err.message : String(err)]);
     }
-  }, [rows, dbType, tableName, nestedStrategy, primaryKey]);
+  }, [rows, dbType, tableName, nestedStrategy, primaryKey, schemaDirty]);
+
+  const crudTarget = useMemo(() => {
+    const map = {
+      "express-prisma": { runtime: "nodejs", framework: "express", language: "typescript", orm: "prisma" },
+      "express-typeorm": { runtime: "nodejs", framework: "express", language: "typescript", orm: "typeorm" },
+      "nestjs-prisma": { runtime: "nodejs", framework: "nestjs", language: "typescript", orm: "prisma" },
+      "nestjs-typeorm": { runtime: "nodejs", framework: "nestjs", language: "typescript", orm: "typeorm" },
+      "express-ts-experimental": { runtime: "nodejs", framework: "express", language: "typescript", orm: "none" },
+      "nestjs-experimental": { runtime: "nodejs", framework: "nestjs", language: "typescript", orm: "none" },
+    };
+    return map[crudTargetKey] ?? map["express-prisma"];
+  }, [crudTargetKey]);
 
   const artifacts = useMemo(() => {
     if (!schema) return [];
-    const target = {
-      runtime: "nodejs",
-      framework: crudFramework,
-      language: crudFramework === "nestjs" ? "typescript" : crudLanguage,
-    };
-    return buildExportBundle(schema, rows, target);
-  }, [schema, rows, crudFramework, crudLanguage]);
+    return buildExportBundle(schema, rows, crudTarget);
+  }, [schema, rows, crudTarget]);
 
   useEffect(() => {
     if (!artifacts.length) {
@@ -137,6 +145,7 @@ export default function JsonToSqlConverter() {
     setJsonText(value);
     try {
       const parsed = parseJsonInput(value);
+      setSchemaDirty(false);
       setRows(parsed.rows);
       setColumns(getColumns(parsed.rows));
       setWarnings(parsed.warnings);
@@ -201,13 +210,9 @@ export default function JsonToSqlConverter() {
       flashError("Schema is not ready yet.");
       return;
     }
-    const files = generateCrud(schema, {
-      runtime: "nodejs",
-      framework: crudFramework,
-      language: crudFramework === "nestjs" ? "typescript" : crudLanguage,
-    });
+    const files = generateCrud(schema, crudTarget);
     setCrudPreview(files.map((f) => `// ===== ${f.path} =====\n${f.content}`).join("\n\n"));
-    flashSuccess(`CRUD package generated (${files.length} files).`);
+    flashSuccess(`CRUD package generated (${files.length} files)${crudTarget.orm === "none" ? " [experimental]" : ""}.`);
   };
 
   const handleCopy = async (text, label) => {
@@ -395,13 +400,44 @@ export default function JsonToSqlConverter() {
 
       {tab === "schema" && (
         <div className={`min-w-0 ${panelClass}`}>
-          <SchemaDesigner schema={schema} onChange={setSchema} />
+          <div className="mb-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="rounded-md bg-zinc-900 px-3 py-1.5 text-xs text-white hover:bg-zinc-800 dark:bg-zinc-800"
+              onClick={() => {
+                setSchemaDirty(false);
+                try {
+                  const next = inferSchema(rows, {
+                    dialect: dbType,
+                    rootTableName: tableName,
+                    nestedStrategy,
+                    primaryKeyHint: primaryKey || undefined,
+                  });
+                  setSchema(next);
+                  flashSuccess("Schema re-inferred from JSON.");
+                } catch (err) {
+                  flashError(err instanceof Error ? err.message : String(err));
+                }
+              }}
+            >
+              Re-infer from JSON
+            </button>
+            {schemaDirty && <span className="text-xs text-amber-600 dark:text-amber-400">Manual edits protected until re-infer</span>}
+          </div>
+          <SchemaDesigner
+            schema={schema}
+            onChange={(next) => {
+              setSchemaDirty(true);
+              setSchema(next);
+              if (next?.rootTableName) setTableName(next.rootTableName);
+            }}
+          />
         </div>
       )}
 
       {tab === "er" && (
         <div className={`min-w-0 ${panelClass}`}>
-          <ErDiagram schema={schema} />
+          <ErDiagram schema={schema} themeDark={themeDark} />
         </div>
       )}
 
@@ -512,24 +548,17 @@ export default function JsonToSqlConverter() {
           <div className={`min-w-0 ${panelClass}`}>
             <div className="mb-3">
               <label className={labelClass} htmlFor="crud-fw">
-                Framework
+                Target
               </label>
-              <select id="crud-fw" className={controlClass} value={crudFramework} onChange={(e) => setCrudFramework(e.target.value)}>
-                <option value="express">Express</option>
-                <option value="nestjs">NestJS</option>
+              <select id="crud-fw" className={controlClass} value={crudTargetKey} onChange={(e) => setCrudTargetKey(e.target.value)}>
+                <option value="express-prisma">Express + Prisma</option>
+                <option value="express-typeorm">Express + TypeORM</option>
+                <option value="nestjs-prisma">NestJS + Prisma</option>
+                <option value="nestjs-typeorm">NestJS + TypeORM</option>
+                <option value="express-ts-experimental">Express TS (experimental scaffold)</option>
+                <option value="nestjs-experimental">NestJS in-memory (experimental)</option>
               </select>
             </div>
-            {crudFramework === "express" && (
-              <div className="mb-3">
-                <label className={labelClass} htmlFor="crud-lang">
-                  Language
-                </label>
-                <select id="crud-lang" className={controlClass} value={crudLanguage} onChange={(e) => setCrudLanguage(e.target.value)}>
-                  <option value="typescript">TypeScript</option>
-                  <option value="javascript">JavaScript</option>
-                </select>
-              </div>
-            )}
             <button type="button" className="w-full rounded-md bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-500" onClick={handleGenerateCrud}>
               Generate CRUD
             </button>
@@ -542,8 +571,8 @@ export default function JsonToSqlConverter() {
             </div>
             <div className="min-w-0 overflow-hidden rounded-lg">
               <CodeEditor
-                value={crudPreview || "Generate CRUD to preview controllers, services, and routes."}
-                language={crudLanguage === "javascript" ? "javascript" : "typescript"}
+                value={crudPreview || "Generate CRUD to preview project files."}
+                language="typescript"
                 readOnly
                 height="420px"
                 dark={themeDark}

@@ -41,6 +41,11 @@ Tabs for JSON, Schema, ER, SQL, CRUD, Export. Calls core only; does not embed di
 
 ### New CRUD target
 
-1. Add renderer in `packages/core/src/crud/generate.ts` (or split templates under `packages/core/templates`)
-2. Extend `CrudTarget` type
+1. Add renderer in `packages/core/src/crud/generate.ts`
+2. Extend `CrudTarget` / `parseCrudTargetFlag`
 3. Wire CLI `--crud` option and UI selector
+4. Prefer real ORM persistence (`prisma` / `typeorm`); label incomplete targets experimental
+
+### Relational SQL
+
+`generateFullSqlBundle` uses `generateRelationalInserts`, which walks original JSON via each table's `sourcePath`, assigns parent PK values to child FK columns, and emits INSERT statements in `orderTables` dependency order.

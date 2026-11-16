@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-11-16
+
+### Fixed
+
+- Relational INSERT for nested objects/arrays with FK values and dependency order
+- MySQL backslash literal escaping; removed unsafe Postgres ARRAY heuristic
+- MSSQL boolean/`N''` literals; SQLite `INTEGER PRIMARY KEY AUTOINCREMENT`
+- Default values quoted as literals (injection-safe)
+- UTF-8 byte size limits; partial `ParseLimits` merge
+- FK inference after surrogate PK insertion; unique table/column names
+- Schema designer rename propagation; ER diagram handles
+- `next start` vs static export: `npm start` now serves `out/`
+
+### Added
+
+- Express/NestJS × Prisma/TypeORM CRUD generators (self-contained projects)
+- `validateSchema`, `renameColumn`, relational planner APIs
+- SQLite execution tests via `node:sqlite`
+- CLI stdin, `--overwrite`, path traversal guards, expanded `--crud` flags
+- Generated-project validation script + CI pack check
+
+### Changed
+
+- Root package marked `private: true`; packages at 0.2.0, ESM-only exports
+- Experimental label for `orm: none` scaffolds
+- Docs/checklists updated to honest status
+
 ## [0.1.0] - 2026-11-16
 
 ### Added

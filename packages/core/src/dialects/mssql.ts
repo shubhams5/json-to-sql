@@ -1,4 +1,4 @@
-import type { ColumnModel, InferredPrimitiveType, TableModel } from "../types.js";
+import type { ColumnModel, InferredPrimitiveType, JsonValue, TableModel } from "../types.js";
 import { BaseDialect } from "./base.js";
 
 export class MssqlDialect extends BaseDialect {
@@ -29,13 +29,31 @@ export class MssqlDialect extends BaseDialect {
     }
   }
 
-  autoIncrementClause(_column: ColumnModel): string {
+  autoIncrementClause(column: ColumnModel): string {
+    if (column.inferredType !== "integer" && !column.sqlType.toUpperCase().includes("INT")) {
+      return "";
+    }
     return "IDENTITY(1,1)";
+  }
+
+  quoteLiteral(value: JsonValue): string {
+    if (value === null || value === undefined) return "NULL";
+    if (typeof value === "boolean") return value ? "1" : "0";
+    if (typeof value === "number") {
+      if (!Number.isFinite(value)) {
+        throw new Error(`Non-finite numeric value cannot be emitted as SQL literal: ${value}`);
+      }
+      return String(value);
+    }
+    if (typeof value === "object") {
+      return this.quoteLiteral(JSON.stringify(value));
+    }
+    return `N'${String(value).replace(/'/g, "''")}'`;
   }
 
   dropTable(table: TableModel, ifExists = true): string {
     if (ifExists) {
-      return `IF OBJECT_ID(N'${table.name.replace(/'/g, "''")}', N'U') IS NOT NULL DROP TABLE ${this.quoteIdent(table.name)};`;
+      return `IF OBJECT_ID(N${this.quoteLiteral(table.name)}, N'U') IS NOT NULL DROP TABLE ${this.quoteIdent(table.name)};`;
     }
     return `DROP TABLE ${this.quoteIdent(table.name)};`;
   }

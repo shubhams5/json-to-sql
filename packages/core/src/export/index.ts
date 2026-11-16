@@ -1,5 +1,6 @@
+import { mapTsType, propKey, safeFileSegment } from "../codegen/safe.js";
 import { generateCrud } from "../crud/generate.js";
-import { generateCreateSchema, generateFullSqlBundle } from "../sql/generate.js";
+import { generateCreateSchema, generateFullSqlBundle, planRelationalInserts } from "../sql/generate.js";
 import type { CrudTarget, ExportArtifact, JsonObject, SchemaModel, TableModel } from "../types.js";
 
 export function exportTypeScriptInterfaces(schema: SchemaModel): ExportArtifact {
@@ -8,8 +9,8 @@ export function exportTypeScriptInterfaces(schema: SchemaModel): ExportArtifact 
       .filter((c) => !c.isExcluded)
       .map((c) => {
         const optional = c.nullable ? "?" : "";
-        const t = mapTs(c.sqlType, c.inferredType);
-        return `  ${c.name}${optional}: ${t};`;
+        const t = mapTsType(c.sqlType, c.inferredType);
+        return `  ${propKey(c.name)}${optional}: ${t};`;
       })
       .join("\n");
     const name = table.name
@@ -32,7 +33,8 @@ export function exportJsonSchema(schema: SchemaModel): ExportArtifact {
     const properties: Record<string, unknown> = {};
     const required: string[] = [];
     for (const col of table.columns.filter((c) => !c.isExcluded)) {
-      properties[col.name] = { type: jsonSchemaType(col.inferredType) };
+      const base = { type: jsonSchemaType(col.inferredType) };
+      properties[col.name] = col.nullable ? { anyOf: [base, { type: "null" }] } : base;
       if (!col.nullable && !col.autoIncrement) required.push(col.name);
     }
     definitions[table.name] = {
@@ -57,22 +59,32 @@ export function exportJsonSchema(schema: SchemaModel): ExportArtifact {
   };
 }
 
+function csvEscape(value: string, isHeader = false): string {
+  let raw = value;
+  if (!isHeader && /^[=+\-@]/.test(raw)) {
+    raw = `'${raw}`;
+  }
+  if (/[",\n\r]/.test(raw) || isHeader) {
+    return `"${raw.replace(/"/g, '""')}"`;
+  }
+  return raw;
+}
+
 export function exportCsv(table: TableModel, rows: JsonObject[]): ExportArtifact {
   const cols = table.columns.filter((c) => !c.isExcluded).map((c) => c.name);
-  const header = cols.join(",");
+  const header = cols.map((c) => csvEscape(c, true)).join(",");
   const lines = rows.map((row) =>
     cols
       .map((col) => {
         const value = row[col];
         if (value === null || value === undefined) return "";
         const raw = typeof value === "object" ? JSON.stringify(value) : String(value);
-        if (/[",\n]/.test(raw)) return `"${raw.replace(/"/g, '""')}"`;
-        return raw;
+        return csvEscape(raw);
       })
       .join(",")
   );
   return {
-    path: `${table.name}.csv`,
+    path: `${safeFileSegment(table.name)}.csv`,
     language: "csv",
     content: [header, ...lines].join("\n") + "\n",
   };
@@ -80,7 +92,7 @@ export function exportCsv(table: TableModel, rows: JsonObject[]): ExportArtifact
 
 export function exportSql(schema: SchemaModel, rows: JsonObject[] = []): ExportArtifact {
   return {
-    path: `${schema.rootTableName}.sql`,
+    path: `${safeFileSegment(schema.rootTableName)}.sql`,
     language: "sql",
     content: rows.length ? generateFullSqlBundle(schema, rows) : generateCreateSchema(schema) + "\n",
   };
@@ -97,8 +109,17 @@ export function buildExportBundle(
     exportJsonSchema(schema),
   ];
 
-  const root = schema.tables.find((t) => t.name === schema.rootTableName) ?? schema.tables[0];
-  if (root) artifacts.push(exportCsv(root, rows));
+  // CSV for every table using planned relational rows when available
+  if (rows.length) {
+    const planned = planRelationalInserts(schema, rows);
+    for (const table of schema.tables) {
+      const tableRows = planned.get(table.name) ?? [];
+      if (tableRows.length) artifacts.push(exportCsv(table, tableRows));
+    }
+  } else {
+    const root = schema.tables.find((t) => t.name === schema.rootTableName) ?? schema.tables[0];
+    if (root) artifacts.push(exportCsv(root, rows));
+  }
 
   if (crudTarget) {
     artifacts.push(
@@ -110,14 +131,6 @@ export function buildExportBundle(
   }
 
   return artifacts;
-}
-
-function mapTs(sqlType: string, inferred: string): string {
-  const t = (sqlType || inferred).toLowerCase();
-  if (t.includes("int") || t.includes("double") || t.includes("float") || t.includes("real") || t.includes("numeric")) return "number";
-  if (t.includes("bool") || t === "bit") return "boolean";
-  if (t.includes("json")) return "Record<string, unknown>";
-  return "string";
 }
 
 function jsonSchemaType(inferred: string): string | string[] {

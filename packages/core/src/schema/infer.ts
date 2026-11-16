@@ -473,6 +473,7 @@ export function renameColumn(
 export function validateSchema(schema: SchemaModel): SchemaValidationIssue[] {
   const issues: SchemaValidationIssue[] = [];
   const tableNames = new Set<string>();
+  const fkNames = new Set<string>();
 
   for (const table of schema.tables) {
     if (tableNames.has(table.name)) {
@@ -506,14 +507,35 @@ export function validateSchema(schema: SchemaModel): SchemaValidationIssue[] {
     }
 
     for (const fk of table.foreignKeys) {
+      if (fkNames.has(fk.name)) {
+        issues.push({ level: "error", message: `Duplicate FK name: ${fk.name}`, table: table.name });
+      }
+      fkNames.add(fk.name);
+
+      if (fk.columns.length !== fk.refColumns.length) {
+        issues.push({
+          level: "error",
+          message: `FK ${fk.name} column count mismatch (${fk.columns.length} vs ${fk.refColumns.length})`,
+          table: table.name,
+        });
+      }
+
       const ref = schema.tables.find((t) => t.name === fk.refTable);
       if (!ref) {
         issues.push({ level: "error", message: `FK references missing table ${fk.refTable}`, table: table.name });
         continue;
       }
       for (const c of fk.columns) {
-        if (!table.columns.some((col) => col.name === c && !col.isExcluded)) {
+        const col = table.columns.find((x) => x.name === c && !x.isExcluded);
+        if (!col) {
           issues.push({ level: "error", message: `FK column missing: ${c}`, table: table.name, column: c });
+        } else if (fk.onDelete === "SET NULL" && !col.nullable) {
+          issues.push({
+            level: "error",
+            message: `FK ${fk.name} ON DELETE SET NULL but column ${c} is NOT NULL`,
+            table: table.name,
+            column: c,
+          });
         }
       }
       for (const c of fk.refColumns) {
@@ -523,6 +545,30 @@ export function validateSchema(schema: SchemaModel): SchemaValidationIssue[] {
       }
     }
   }
+
+  // Cycle detection (lazy import avoided — inline DFS)
+  const visiting = new Set<string>();
+  const done = new Set<string>();
+  const stack: string[] = [];
+  const byName = new Map(schema.tables.map((t) => [t.name, t]));
+
+  function visit(name: string) {
+    if (done.has(name) || !byName.has(name)) return;
+    if (visiting.has(name)) {
+      const idx = stack.indexOf(name);
+      const path = idx >= 0 ? stack.slice(idx).concat(name).join(" -> ") : name;
+      issues.push({ level: "warning", message: `Foreign-key cycle detected: ${path}`, table: name });
+      return;
+    }
+    visiting.add(name);
+    stack.push(name);
+    for (const fk of byName.get(name)!.foreignKeys) visit(fk.refTable);
+    stack.pop();
+    visiting.delete(name);
+    done.add(name);
+  }
+
+  for (const table of schema.tables) visit(table.name);
 
   return issues;
 }

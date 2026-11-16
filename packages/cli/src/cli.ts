@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import {
@@ -10,6 +11,15 @@ import {
   type CrudTarget,
   type DbDialectId,
 } from "@json-to-sql/core";
+
+const require = createRequire(import.meta.url);
+const PKG_VERSION: string = (() => {
+  try {
+    return (require("../package.json") as { version?: string }).version ?? "0.2.1";
+  } catch {
+    return "0.2.1";
+  }
+})();
 
 const DIALECTS = new Set<DbDialectId>(["postgres", "mysql", "mssql", "sqlite"]);
 const NESTED = new Set(["json_column", "child_tables"]);
@@ -88,7 +98,7 @@ function parseArgs(argv: string[]) {
       process.exit(0);
     }
     if (flag === "--version" || flag === "-v") {
-      console.log("0.2.0");
+      console.log(PKG_VERSION);
       process.exit(0);
     }
     if (flag === "--overwrite") {

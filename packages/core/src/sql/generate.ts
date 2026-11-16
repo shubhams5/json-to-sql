@@ -1,12 +1,22 @@
+import { randomUUID } from "node:crypto";
+import { isIntegerLikeSqlType, isUuidSqlType } from "../codegen/safe.js";
 import { getDialect } from "../dialects/index.js";
 import type {
   DbDialectId,
+  ForeignKeyModel,
   GenerateDmlOptions,
   JsonObject,
   JsonValue,
   SchemaModel,
   TableModel,
 } from "../types.js";
+
+export type PkAssignStrategy = "uuid" | "sequence" | "error";
+
+export interface PlanRelationalOptions {
+  /** Override missing-PK strategy. Defaults: uuid→uuid, int→sequence, other string→error. */
+  pkStrategy?: PkAssignStrategy;
+}
 
 function isNullish(value: unknown): value is null | undefined {
   return value === null || value === undefined;
@@ -128,44 +138,126 @@ export function generateSQL(options: GenerateDmlOptions): string {
   return generateDml(options);
 }
 
-export function orderTables(tables: TableModel[]): TableModel[] {
+export interface OrderTablesResult {
+  ordered: TableModel[];
+  cycles: string[][];
+}
+
+/** Detect directed cycles in the FK graph (table → refTable). */
+export function detectFkCycles(tables: TableModel[]): string[][] {
   const byName = new Map(tables.map((t) => [t.name, t]));
+  const cycles: string[][] = [];
   const visiting = new Set<string>();
   const done = new Set<string>();
-  const result: TableModel[] = [];
-  const cycleWarnings: string[] = [];
+  const stack: string[] = [];
 
   function visit(name: string) {
     if (done.has(name) || !byName.has(name)) return;
     if (visiting.has(name)) {
-      cycleWarnings.push(name);
+      const idx = stack.indexOf(name);
+      if (idx >= 0) cycles.push(stack.slice(idx).concat(name));
       return;
     }
     visiting.add(name);
+    stack.push(name);
+    for (const fk of byName.get(name)!.foreignKeys) visit(fk.refTable);
+    stack.pop();
+    visiting.delete(name);
+    done.add(name);
+  }
+
+  for (const table of tables) visit(table.name);
+  return cycles;
+}
+
+/** Tables involved in at least one FK cycle (including self-FK). */
+export function tablesInFkCycles(tables: TableModel[]): Set<string> {
+  const set = new Set<string>();
+  for (const cycle of detectFkCycles(tables)) {
+    for (const name of cycle) {
+      if (name) set.add(name);
+    }
+  }
+  // Self-FK: table references itself
+  for (const table of tables) {
+    if (table.foreignKeys.some((fk) => fk.refTable === table.name)) {
+      set.add(table.name);
+    }
+  }
+  return set;
+}
+
+export function orderTables(tables: TableModel[]): TableModel[] {
+  return orderTablesWithCycles(tables).ordered;
+}
+
+export function orderTablesWithCycles(tables: TableModel[]): OrderTablesResult {
+  const byName = new Map(tables.map((t) => [t.name, t]));
+  const visiting = new Set<string>();
+  const done = new Set<string>();
+  const result: TableModel[] = [];
+  const cycles = detectFkCycles(tables);
+
+  function visit(name: string) {
+    if (done.has(name) || !byName.has(name)) return;
+    if (visiting.has(name)) return;
+    visiting.add(name);
     const table = byName.get(name)!;
-    for (const fk of table.foreignKeys) visit(fk.refTable);
+    for (const fk of table.foreignKeys) {
+      // Skip edges that close a cycle so topological order still completes
+      if (visiting.has(fk.refTable)) continue;
+      visit(fk.refTable);
+    }
     visiting.delete(name);
     done.add(name);
     result.push(table);
   }
 
   for (const table of tables) visit(table.name);
-  if (cycleWarnings.length) {
-    // Still return partial order; callers may inspect length
+  // Ensure all tables present even if isolated from visit skips
+  for (const table of tables) {
+    if (!done.has(table.name)) result.push(table);
   }
-  return result;
+  return { ordered: result, cycles };
+}
+
+function fkTouchesCycle(fk: ForeignKeyModel, tableName: string, cyclicTables: Set<string>): boolean {
+  return cyclicTables.has(tableName) && cyclicTables.has(fk.refTable);
 }
 
 export function generateCreateSchema(schema: SchemaModel): string {
   const dialect = getDialect(schema.dialect);
-  const ordered = orderTables(schema.tables);
+  const { ordered, cycles } = orderTablesWithCycles(schema.tables);
+  const cyclicTables = tablesInFkCycles(schema.tables);
   const parts: string[] = [];
+
+  if (cycles.length) {
+    parts.push(
+      `-- WARN: Foreign-key cycle(s) detected: ${cycles.map((c) => c.join(" -> ")).join("; ")}. Emitting deferred ALTER TABLE constraints.`
+    );
+  }
+
+  const deferred: Array<{ table: TableModel; fk: ForeignKeyModel }> = [];
+
   for (const table of ordered) {
-    parts.push(dialect.createTable(table));
+    const inlineFks = table.foreignKeys.filter((fk) => !fkTouchesCycle(fk, table.name, cyclicTables));
+    const deferFks = table.foreignKeys.filter((fk) => fkTouchesCycle(fk, table.name, cyclicTables));
+    const tableForCreate: TableModel = { ...table, foreignKeys: inlineFks };
+    parts.push(dialect.createTable(tableForCreate, { includeForeignKeys: true }));
     for (const index of table.indexes) {
       parts.push(dialect.createIndex(table, index));
     }
+    for (const fk of deferFks) deferred.push({ table, fk });
   }
+
+  for (const { table, fk } of deferred) {
+    parts.push(
+      dialect.alterTableAddForeignKey(table, fk, {
+        deferrable: schema.dialect === "postgres",
+      })
+    );
+  }
+
   return parts.join("\n\n");
 }
 
@@ -200,16 +292,54 @@ export function nestedKeyFromPath(parentPath: string, childPath: string): string
  */
 export function planRelationalInserts(
   schema: SchemaModel,
-  rootRows: JsonObject[]
+  rootRows: JsonObject[],
+  options: PlanRelationalOptions = {}
 ): Map<string, JsonObject[]> {
   const planned = new Map<string, JsonObject[]>();
   const byName = new Map(schema.tables.map((t) => [t.name, t]));
+  const usedIds = new Map<string, Set<number>>();
   const seqCounters = new Map<string, number>();
 
   function nextSeq(tableName: string): number {
-    const n = (seqCounters.get(tableName) ?? 0) + 1;
+    const used = usedIds.get(tableName) ?? new Set<number>();
+    let n = seqCounters.get(tableName) ?? 0;
+    do {
+      n += 1;
+    } while (used.has(n));
     seqCounters.set(tableName, n);
+    used.add(n);
+    usedIds.set(tableName, used);
     return n;
+  }
+
+  function noteUsedId(tableName: string, value: JsonValue) {
+    if (typeof value === "number" && Number.isInteger(value)) {
+      const used = usedIds.get(tableName) ?? new Set<number>();
+      used.add(value);
+      usedIds.set(tableName, used);
+    }
+  }
+
+  function assignMissingPk(table: TableModel, pk: string, pkCol: (typeof table.columns)[0] | undefined): JsonValue {
+    const sqlType = pkCol?.sqlType ?? "";
+    const inferred = pkCol?.inferredType;
+    const strategy =
+      options.pkStrategy ??
+      (isUuidSqlType(sqlType, inferred)
+        ? "uuid"
+        : isIntegerLikeSqlType(sqlType, inferred) || pkCol?.autoIncrement
+          ? "sequence"
+          : "error");
+
+    if (strategy === "uuid" || (strategy !== "sequence" && isUuidSqlType(sqlType, inferred))) {
+      return randomUUID();
+    }
+    if (strategy === "sequence" || isIntegerLikeSqlType(sqlType, inferred) || pkCol?.autoIncrement) {
+      return nextSeq(table.name);
+    }
+    throw new Error(
+      `Unsupported missing primary key for ${table.name}.${pk} (type ${sqlType || inferred || "unknown"}). Provide values or use a UUID/integer PK.`
+    );
   }
 
   function append(tableName: string, row: JsonObject) {
@@ -238,22 +368,19 @@ export function planRelationalInserts(
         const rawKey = col.originalName || col.name;
         if (Object.prototype.hasOwnProperty.call(row, rawKey)) {
           const v = row[rawKey];
-          // Skip nested objects/arrays that became child tables
           const isNestedParent =
-            (typeof v === "object" && v !== null) &&
+            typeof v === "object" &&
+            v !== null &&
             childrenOf(table).some((child) => nestedKeyFromPath(table.sourcePath, child.sourcePath) === rawKey);
           if (isNestedParent) continue;
           insertRow[col.name] = v as JsonValue;
         }
       }
 
-      // Assign PK if missing
       if (!(pk in insertRow) || isNullish(insertRow[pk])) {
-        if (pkCol?.autoIncrement || pkCol?.inferredType === "integer") {
-          insertRow[pk] = nextSeq(table.name);
-        } else {
-          insertRow[pk] = nextSeq(table.name);
-        }
+        insertRow[pk] = assignMissingPk(table, pk, pkCol);
+      } else {
+        noteUsedId(table.name, insertRow[pk]!);
       }
 
       append(table.name, insertRow);
@@ -285,8 +412,12 @@ export function planRelationalInserts(
   return planned;
 }
 
-export function generateRelationalInserts(schema: SchemaModel, rootRows: JsonObject[]): string {
-  const planned = planRelationalInserts(schema, rootRows);
+export function generateRelationalInserts(
+  schema: SchemaModel,
+  rootRows: JsonObject[],
+  options: PlanRelationalOptions = {}
+): string {
+  const planned = planRelationalInserts(schema, rootRows, options);
   const ordered = orderTables(schema.tables);
   const parts: string[] = [];
 
@@ -294,23 +425,24 @@ export function generateRelationalInserts(schema: SchemaModel, rootRows: JsonObj
     const rows = planned.get(table.name);
     if (!rows?.length) continue;
     const cols = table.columns.filter((c) => !c.isExcluded).map((c) => c.name);
-    const pkCol = table.columns.find((c) => c.isPrimaryKey);
-    // Include PK values so FKs resolve; only exclude when auto-increment AND we want DB to assign —
-    // relational planner always supplies ids for FK integrity.
-    const excludePk = false;
-    parts.push(
-      generateDml({
-        data: rows,
-        tableName: table.name,
-        primaryKey: table.primaryKey[0],
-        operation: "INSERT",
-        batchInsert: true,
-        dbType: schema.dialect,
-        excludePrimaryKeyOnInsert: excludePk,
-        columns: cols.filter((c) => rows.some((r) => c in r && r[c] !== undefined)),
-      })
-    );
-    void pkCol;
+    const insertCols = cols.filter((c) => rows.some((r) => c in r && r[c] !== undefined));
+    const dml = generateDml({
+      data: rows,
+      tableName: table.name,
+      primaryKey: table.primaryKey[0],
+      operation: "INSERT",
+      batchInsert: true,
+      dbType: schema.dialect,
+      excludePrimaryKeyOnInsert: false,
+      columns: insertCols,
+    });
+    if (schema.dialect === "mssql" && table.columns.some((c) => c.autoIncrement && insertCols.includes(c.name))) {
+      parts.push(`SET IDENTITY_INSERT ${getDialect("mssql").quoteIdent(table.name)} ON;`);
+      parts.push(dml);
+      parts.push(`SET IDENTITY_INSERT ${getDialect("mssql").quoteIdent(table.name)} OFF;`);
+    } else {
+      parts.push(dml);
+    }
   }
 
   return parts.filter(Boolean).join("\n\n");

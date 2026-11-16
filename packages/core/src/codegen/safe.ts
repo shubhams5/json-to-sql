@@ -53,17 +53,29 @@ export function mapTsType(sqlType: string, inferred: string): string {
   const t = (sqlType || inferred).toLowerCase();
   if (t.includes("tinyint(1)") || t === "bit" || t.includes("bool")) return "boolean";
   if (t.includes("bigint")) return "bigint";
-  if (
-    t.includes("int") ||
-    t.includes("double") ||
-    t.includes("float") ||
-    t.includes("real") ||
-    t.includes("numeric") ||
-    t.includes("decimal") ||
-    t.includes("money")
-  ) {
+  if (t.includes("decimal") || t.includes("numeric") || t.includes("money")) return "string";
+  if (t.includes("int") || t.includes("double") || t.includes("float") || t.includes("real")) {
     return "number";
   }
   if (t.includes("json")) return "Record<string, unknown>";
   return "string";
+}
+
+export function parseDecimalPrecision(sqlType: string): { precision: number; scale: number } | null {
+  const m = sqlType.match(/\b(?:decimal|numeric)\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)/i);
+  if (!m) return null;
+  return { precision: Number(m[1]), scale: Number(m[2]) };
+}
+
+export function isUuidSqlType(sqlType: string, inferred?: string): boolean {
+  const t = (sqlType || inferred || "").toLowerCase();
+  return t.includes("uuid") || t === "uniqueidentifier";
+}
+
+export function isIntegerLikeSqlType(sqlType: string, inferred?: string): boolean {
+  const t = (sqlType || inferred || "").toLowerCase();
+  if (t.includes("uuid") || t.includes("char") || t.includes("text") || t.includes("decimal") || t.includes("numeric")) {
+    return false;
+  }
+  return inferred === "integer" || /\bint\b/.test(t) || t.includes("serial") || t === "integer";
 }

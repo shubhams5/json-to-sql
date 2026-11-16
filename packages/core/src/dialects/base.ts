@@ -51,10 +51,18 @@ export abstract class BaseDialect implements Dialect {
     return action;
   }
 
-  foreignKeyClause(fk: ForeignKeyModel): string {
+  foreignKeyClause(fk: ForeignKeyModel, options?: { deferrable?: boolean }): string {
     const cols = fk.columns.map((c) => this.quoteIdent(c)).join(", ");
     const refs = fk.refColumns.map((c) => this.quoteIdent(c)).join(", ");
-    return `CONSTRAINT ${this.quoteIdent(fk.name)} FOREIGN KEY (${cols}) REFERENCES ${this.quoteIdent(fk.refTable)} (${refs}) ON DELETE ${this.referentialAction(fk.onDelete)} ON UPDATE ${this.referentialAction(fk.onUpdate)}`;
+    let clause = `CONSTRAINT ${this.quoteIdent(fk.name)} FOREIGN KEY (${cols}) REFERENCES ${this.quoteIdent(fk.refTable)} (${refs}) ON DELETE ${this.referentialAction(fk.onDelete)} ON UPDATE ${this.referentialAction(fk.onUpdate)}`;
+    if (options?.deferrable && this.id === "postgres") {
+      clause += " DEFERRABLE INITIALLY DEFERRED";
+    }
+    return clause;
+  }
+
+  alterTableAddForeignKey(table: TableModel, fk: ForeignKeyModel, options?: { deferrable?: boolean }): string {
+    return `ALTER TABLE ${this.quoteIdent(table.name)} ADD ${this.foreignKeyClause(fk, options)};`;
   }
 
   protected formatDefault(column: ColumnModel): string | null {
@@ -95,12 +103,13 @@ export abstract class BaseDialect implements Dialect {
     return parts.join(" ");
   }
 
-  createTable(table: TableModel): string {
+  createTable(table: TableModel, options?: { includeForeignKeys?: boolean }): string {
+    const includeForeignKeys = options?.includeForeignKeys !== false;
     const cols = table.columns.filter((c) => !c.isExcluded);
     const colNames = new Set(cols.map((c) => c.name));
     const lines = cols.map((c) => this.columnDefinition(c));
 
-    let pk = table.primaryKey.length
+    const pk = table.primaryKey.length
       ? table.primaryKey.filter((c) => colNames.has(c))
       : cols.filter((c) => c.isPrimaryKey).map((c) => c.name);
 
@@ -115,9 +124,11 @@ export abstract class BaseDialect implements Dialect {
       lines.push(`PRIMARY KEY (${pk.map((c) => this.quoteIdent(c)).join(", ")})`);
     }
 
-    for (const fk of table.foreignKeys) {
-      if (fk.columns.every((c) => colNames.has(c))) {
-        lines.push(this.foreignKeyClause(fk));
+    if (includeForeignKeys) {
+      for (const fk of table.foreignKeys) {
+        if (fk.columns.every((c) => colNames.has(c))) {
+          lines.push(this.foreignKeyClause(fk));
+        }
       }
     }
     return `CREATE TABLE ${this.quoteIdent(table.name)} (\n  ${lines.join(",\n  ")}\n);`;

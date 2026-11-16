@@ -21,7 +21,7 @@ Honest status after 0.2.0 hardening. `[x]` = implemented and covered by automate
 - [x] ALTER TABLE ADD COLUMN
 - [x] PK / FK / unique / indexes / NOT NULL / defaults (literal-safe) / identity
 - [x] Relational INSERT for nested data (SQLite execution test)
-- [~] Live PG/MySQL/MSSQL container integration tests (not in default CI yet)
+- [x] Live PG/MySQL/MSSQL container integration jobs in CI (separate workflow jobs)
 
 ## Schema designer
 
@@ -49,7 +49,7 @@ Honest status after 0.2.0 hardening. `[x]` = implemented and covered by automate
 - [x] NestJS + Prisma
 - [x] NestJS + TypeORM
 - [~] Experimental `orm:none` scaffolds (explicitly labeled)
-- [~] Generated-project compile CI for Express+TypeORM; Prisma/Nest full install not gated on every PR
+- [x] Generated-project compile CI for all four targets + `prisma validate` + Express+Prisma SQLite smoke
 
 ## Import / export
 
